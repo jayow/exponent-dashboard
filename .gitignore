@@ -1,0 +1,10 @@
+.env
+node_modules/
+data/
+.next/
+out/
+.vercel/
+*.log
+.DS_Store
+web/public/events/
+__pycache__/

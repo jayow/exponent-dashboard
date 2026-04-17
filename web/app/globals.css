@@ -1,0 +1,24 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body {
+  background: #0a0a0a;
+  color: #e0e0e0;
+}
+body {
+  min-height: 100vh;
+}
+
+/* Remove Recharts bar hover highlight */
+.recharts-bar-rectangle:hover { opacity: 1 !important; }
+.recharts-rectangle.recharts-tooltip-cursor { fill: transparent !important; }
+
+@layer components {
+  .th-sortable {
+    @apply select-none cursor-pointer text-left font-medium text-white/50 hover:text-white transition text-xs uppercase tracking-wider;
+  }
+  .cell {
+    @apply px-3 py-2.5 whitespace-nowrap;
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "name": "exponentdashboard",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.32.1",
+    "@exponent-labs/exponent-sdk": "^0.9.4",
+    "@solana/web3.js": "^1.98.4"
+  }
+}
