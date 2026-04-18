@@ -64,14 +64,23 @@ RATE_RE = re.compile(r'sy exchange rate:\s*(\d+)')
 # Instruction → action mapping (case-insensitive)
 INSTR_MAP = {
     'wrapperbuyyt': 'buyYt', 'wrappersellyt': 'sellYt', 'withdrawyt': 'sellYt',
+    'buyyt': 'buyYt', 'sellyt': 'sellYt',
     'initializeyieldposition': 'buyYt',
     'wrapperprovideliquidity': 'addLiq', 'wrapperprovideliquiditybase': 'addLiq',
-    'wrapperprovideliquidityyt': 'addLiq', 'initlpposition': 'addLiq', 'deposityt': 'addLiq',
+    'wrapperprovideliquidityyt': 'addLiq', 'wrapperprovideliquidityclassic': 'addLiq',
+    'initlpposition': 'addLiq', 'deposityt': 'addLiq',
+    'marketdepositlp': 'addLiq', 'markettwodepositliquidity': 'addLiq',
     'wrapperwithdrawliquidity': 'removeLiq', 'wrapperwithdrawliquidityclassic': 'removeLiq',
+    'marketwithdrawlp': 'removeLiq',
     'stageytyield': 'claimYield', 'wrappercollectinterest': 'claimYield',
     'collectinterest': 'claimYield', 'collectemission': 'claimYield',
     'wrapperbuypt': 'buyPt', 'wrappersellpt': 'sellPt',
-    'wrappermerge': 'redeemPt', 'wrapperstrip': 'strip', 'strip': 'strip',
+    'tradept': 'buyPt',
+    'wrappermerge': 'redeemPt', 'merge': 'redeemPt',
+    'wrapperstrip': 'strip', 'strip': 'strip',
+    'wrapperwithdrawfunds': 'removeLiq',
+    'wrappermarketoffer': 'addLiq', 'wrapperpostoffer': 'addLiq',
+    'wrapperremoveoffer': 'removeLiq',
 }
 SKIP_INSTRS = {'refreshreserve', 'refreshobligation', 'refreshreservesbatch',
                'initobligation', 'initusermetadata', 'initobligationfarmsforreserve', 'initreserve'}
@@ -92,13 +101,17 @@ if os.path.exists(MARKETS_PATH):
 
 def parse_instruction_from_logs(logs):
     """Extract the first non-housekeeping Exponent instruction from logs."""
+    in_exponent = False
     for log in (logs or []):
-        if 'Instruction:' not in log:
+        if EXPONENT_PROGRAM in log and 'invoke' in log:
+            in_exponent = True
             continue
-        instr = log.split('Instruction:')[-1].strip()
-        if instr.lower() in SKIP_INSTRS:
-            continue
-        return instr
+        if in_exponent and 'Instruction:' in log:
+            instr = log.split('Instruction:')[-1].strip()
+            if instr.lower() not in SKIP_INSTRS:
+                return instr
+        if 'success' in log or ('invoke' in log and EXPONENT_PROGRAM not in log):
+            in_exponent = False
     return None
 
 

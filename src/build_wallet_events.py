@@ -103,13 +103,36 @@ def main():
             market = e.get('market', '')
             date = datetime.fromtimestamp(bt, tz=timezone.utc).strftime('%Y-%m-%d') if bt else ''
 
+            # Re-classify misclassified events using extended instruction map
+            action = e.get('action', '')
+            instr = e.get('instr', '')
+            if not action and instr:
+                RECLASSIFY = {
+                    'marketdepositlp': 'addLiq', 'markettwodepositliquidity': 'addLiq',
+                    'marketwithdrawlp': 'removeLiq', 'merge': 'redeemPt',
+                    'tradept': 'buyPt', 'buyyt': 'buyYt', 'sellyt': 'sellYt',
+                    'wrapperprovideliquidityclassic': 'addLiq',
+                    'wrapperwithdrawfunds': 'removeLiq',
+                    'wrappermarketoffer': 'addLiq', 'wrapperpostoffer': 'addLiq',
+                    'wrapperremoveoffer': 'removeLiq',
+                    'stageytyield': 'claimYield', 'collectinterest': 'claimYield',
+                    'collectemission': 'claimYield', 'wrappercollectinterest': 'claimYield',
+                }
+                action = RECLASSIFY.get(instr.lower(), action)
+            # For GetAccountDataSize with Exponent flag — infer from token changes
+            if not action and e.get('exponent') and instr.lower() in ('getaccountdatasize', 'initializeimmutableowner', 'initializeaccount3', ''):
+                tc = e.get('tokenChanges', {})
+                if any(v > 0 for v in tc.values()):
+                    action = 'claimYield'
+                    instr = 'claimYield (inferred)'
+
             # Build a clean event for the wallet page
             evt = {
                 'sig': e.get('sig', ''),
                 'blockTime': bt,
                 'market': market,
-                'action': e.get('action', ''),
-                'instr': e.get('instr', ''),
+                'action': action,
+                'instr': instr,
             }
 
             # Add token changes with symbols and USD
