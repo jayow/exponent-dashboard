@@ -41,6 +41,22 @@ if os.path.exists(markets_path):
             MARKET_PRICE_KEY[m['key']] = 'SOL'
 
 
+# Build set of market-related mints (underlying/quote tokens that should be priced)
+MARKET_UNDERLYING_MINTS = set()
+if os.path.exists(markets_path):
+    for m in json.load(open(markets_path)):
+        if m.get('underlyingMint'): MARKET_UNDERLYING_MINTS.add(m['underlyingMint'])
+        if m.get('quoteMint'): MARKET_UNDERLYING_MINTS.add(m['quoteMint'])
+# Add known base tokens
+api_path = os.path.join(DATA_DIR, 'exponent_markets_api.json')
+if os.path.exists(api_path):
+    for am in json.load(open(api_path)):
+        MARKET_UNDERLYING_MINTS.add(am['underlyingAsset']['mint'])
+        MARKET_UNDERLYING_MINTS.add(am.get('quoteAsset', {}).get('mint', ''))
+        MARKET_UNDERLYING_MINTS.add(am.get('baseTokenMint', ''))
+MARKET_UNDERLYING_MINTS.discard('')
+
+
 def get_price(date, market):
     pk = MARKET_PRICE_KEY.get(market, 'USD')
     return PRICES.get(pk, {}).get(date, 1.0)
@@ -98,11 +114,18 @@ def main():
                 total_usd = 0
                 for mint, delta in tc.items():
                     symbol = MINT_SYMBOLS.get(mint, mint[:8] + '…')
-                    usd = abs(delta) * price
+                    # Price market tokens (SY/PT/YT/underlying). Emission rewards = null
+                    is_priceable = (
+                        symbol.startswith(('SY-', 'PT-', 'YT-'))
+                        or mint in MARKET_UNDERLYING_MINTS
+                        or symbol.endswith('…')  # unmapped = assume market token
+                    )
+                    token_price = price if is_priceable else 0
+                    usd = abs(delta) * token_price
                     total_usd += usd if delta > 0 else -usd
-                    changes.append({'symbol': symbol, 'delta': round(delta, 6), 'usd': round(usd, 2)})
+                    changes.append({'symbol': symbol, 'delta': round(delta, 6), 'usd': round(usd, 2) if token_price > 0 else None})
                 evt['changes'] = changes
-                evt['usd'] = round(abs(total_usd), 2)
+                evt['usd'] = round(abs(total_usd), 2) if total_usd != 0 else None
 
             wallet_events[signer].append(evt)
 

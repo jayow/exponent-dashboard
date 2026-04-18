@@ -57,6 +57,25 @@ if os.path.exists(api_path):
         for a in am.get('orderbookAddresses', []): PROTOCOL_ADDRS.add(a)
 
 
+# Build set of priceable mints (SY/PT/YT/underlying/quote — NOT emission tokens)
+PRICEABLE_MINTS = set()
+_api_path = os.path.join(DATA_DIR, 'exponent_markets_api.json')
+if os.path.exists(_api_path):
+    for _am in json.load(open(_api_path)):
+        for _f in ('syMint', 'ptMint', 'ytMint'):
+            PRICEABLE_MINTS.add(_am.get(_f, ''))
+        PRICEABLE_MINTS.add(_am['underlyingAsset']['mint'])
+        PRICEABLE_MINTS.add(_am.get('quoteAsset', {}).get('mint', ''))
+        PRICEABLE_MINTS.add(_am.get('baseTokenMint', ''))
+PRICEABLE_MINTS.discard('')
+
+# Load mint symbols for emission token detection
+MINT_SYMBOLS_MAP = {}
+_mint_sym_path = os.path.join(DATA_DIR, 'mint_symbols.json')
+if os.path.exists(_mint_sym_path):
+    MINT_SYMBOLS_MAP = json.load(open(_mint_sym_path))
+
+
 def normalize_platform(p):
     if not p: return 'Other'
     import re
@@ -132,12 +151,16 @@ def main():
         platform = normalize_platform(MARKET_PLATFORM.get(market, ''))
         signer = e.get('signer', '')
 
-        # Estimate claim USD from token changes (positive values = received)
+        # Estimate claim USD — only price market-related tokens, not emission rewards
         claim_usd = 0
         pk = MARKET_PRICE_KEY.get(market, 'USD')
         price = get_price(date, pk)
         for mint, delta in e.get('tokenChanges', {}).items():
-            if delta > 0:
+            if delta <= 0:
+                continue
+            sym = MINT_SYMBOLS_MAP.get(mint, '')
+            is_priceable = mint in PRICEABLE_MINTS or sym.startswith(('SY-', 'PT-', 'YT-')) or not sym or sym.endswith('…')
+            if is_priceable:
                 claim_usd += delta * price
 
         daily_claims_protocol[date]['count'] += 1
