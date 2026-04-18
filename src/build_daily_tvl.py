@@ -393,11 +393,70 @@ def main():
                 wallet_total_usd[owner] += h.get('usd', 0)
         unique_holders = len(all_wallets)
 
-        # Top holders across all markets
-        top_holders = sorted(
-            [{'wallet': w, 'totalUsd': round(v, 2)} for w, v in wallet_total_usd.items() if v > 0],
-            key=lambda x: -x['totalUsd']
+        # Build set of known protocol addresses
+        protocol_addrs = set()
+        api_path = os.path.join(DATA_DIR, 'exponent_markets_api.json')
+        if os.path.exists(api_path):
+            api_data = json.load(open(api_path))
+            for am in api_data:
+                for field in ('vaultAddress', 'syMint', 'ptMint', 'ytMint'):
+                    if am.get(field): protocol_addrs.add(am[field])
+                for a in am.get('legacyMarketAddresses', []): protocol_addrs.add(a)
+                for a in am.get('orderbookAddresses', []): protocol_addrs.add(a)
+        clmm_path = os.path.join(DATA_DIR, 'clmm_market_map.json')
+        if os.path.exists(clmm_path):
+            protocol_addrs.update(json.load(open(clmm_path)).keys())
+        protocol_addrs.add('ExponentnaRg3CQbW6dqQNZKXp7gtZ9DGMp1cwC4HAS7')
+        protocol_addrs.add('XPC1MM4dYACDfykNuXYZ5una2DsMDWL24CrYubCvarC')
+
+        # Count markets per wallet
+        wallet_markets = defaultdict(set)
+        for snap_key, snap in holders_data.items():
+            market_name = snap_key.rsplit(':', 1)[0]
+            for h in snap.get('top', []):
+                wallet_markets[h.get('owner', '')].add(market_name)
+
+        # Load wallet activity data for first/last txn dates
+        data_path = os.path.join(ROOT, 'web', 'public', 'data.json')
+        wallet_activity = {}
+        if os.path.exists(data_path):
+            web_data = json.load(open(data_path))
+            for w in web_data.get('wallets', []):
+                wallet_activity[w['addr']] = w
+
+        events_dir = os.path.join(ROOT, 'web', 'public', 'events')
+
+        # Top holders across all markets with enriched data
+        top_raw = sorted(
+            [(w, v) for w, v in wallet_total_usd.items() if v > 0],
+            key=lambda x: -x[1]
         )[:50]
+
+        top_holders = []
+        for w, usd in top_raw:
+            entry = {
+                'wallet': w,
+                'totalUsd': round(usd, 2),
+                'markets': len(wallet_markets.get(w, set())),
+                'type': 'protocol' if w in protocol_addrs else 'user',
+            }
+            # Get first/last txn from events file
+            evt_path = os.path.join(events_dir, f'{w}.json')
+            if os.path.exists(evt_path):
+                try:
+                    events = json.load(open(evt_path))
+                    if events:
+                        entry['firstTxn'] = datetime.fromtimestamp(events[0].get('blockTime', 0), tz=timezone.utc).strftime('%Y-%m-%d')
+                        entry['lastTxn'] = datetime.fromtimestamp(events[-1].get('blockTime', 0), tz=timezone.utc).strftime('%Y-%m-%d')
+                        entry['txCount'] = len(events)
+                except:
+                    pass
+            # Fallback from data.json
+            if 'txCount' not in entry:
+                wa = wallet_activity.get(w, {})
+                entry['txCount'] = wa.get('txs', 0)
+
+            top_holders.append(entry)
 
         # Concentration per market
         for snap_key, snap in holders_data.items():

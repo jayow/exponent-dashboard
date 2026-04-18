@@ -275,12 +275,12 @@ export function HistoricalChart() {
       <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1">
-            {(['tvl', 'flow', 'volume', 'apy'] as Metric[]).map(m => (
+            {(['tvl', 'flow', 'volume'] as Metric[]).map(m => (
               <button key={m} onClick={() => { setMetric(m); setHidden(new Set()); }}
                 className={`text-xs px-3 py-1.5 rounded-lg border transition ${
                   metric === m ? 'border-white/30 bg-white/10 text-white' : 'border-white/10 text-white/40 hover:text-white'
                 }`}>
-                {m === 'tvl' ? 'TVL' : m === 'flow' ? 'Inflow / Outflow' : m === 'volume' ? 'Volume' : 'APY'}
+                {m === 'tvl' ? 'TVL' : m === 'flow' ? 'Inflow / Outflow' : 'Volume'}
               </button>
             ))}
           </div>

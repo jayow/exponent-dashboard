@@ -86,51 +86,58 @@ export function MarketLifecycle() {
       </div>
 
       <div className="rounded-2xl border border-eclipse-700/60 bg-eclipse-900/40 backdrop-blur p-4 overflow-x-auto">
-        {/* Time axis */}
-        <div className="relative h-6 mb-2 text-[10px] text-white/30">
-          {['2025-01', '2025-04', '2025-07', '2025-10', '2026-01', '2026-04'].map(d => {
-            const pct = toPercent(d + '-01');
-            if (pct < 0 || pct > 100) return null;
-            return <span key={d} className="absolute" style={{ left: `${pct}%` }}>{d}</span>;
-          })}
-        </div>
+        <div className="relative">
+          {/* Today marker — full height vertical line */}
+          {(() => {
+            const todayPct = toPercent(new Date().toISOString().slice(0, 10));
+            if (todayPct < 0 || todayPct > 100) return null;
+            return (
+              <div className="absolute top-0 bottom-0 z-10 pointer-events-none" style={{ left: `${todayPct}%` }}>
+                <div className="w-px h-full bg-white/40" />
+                <div className="absolute -top-5 -translate-x-1/2 text-[9px] text-white/60 bg-eclipse-900/80 px-1 rounded">today</div>
+              </div>
+            );
+          })()}
 
-        {/* Bars by platform */}
-        {byPlatform.map(([platform, markets]) => (
-          <div key={platform} className="mb-3">
-            <div className="text-[11px] text-white/40 mb-1">{platform}</div>
-            {markets.map(m => {
-              const start = toPercent(m.firstTvlDate!);
-              const end = toPercent(m.maturityDate);
-              const width = Math.max(0.5, end - start);
-              const color = PLATFORM_COLORS[normalizePlatform(m.platform)] || '#666';
-              const isActive = m.status === 'active';
-              return (
-                <div key={m.key} className="relative h-5 mb-0.5" title={`${m.key}: ${m.firstTvlDate} → ${m.maturityDate} (peak $${(m.peakTvl/1e6).toFixed(1)}M)`}>
-                  <div
-                    className="absolute h-full rounded-sm transition-opacity hover:opacity-100"
-                    style={{
-                      left: `${start}%`,
-                      width: `${width}%`,
-                      background: color,
-                      opacity: isActive ? 0.8 : 0.3,
-                    }}
-                  />
-                  <span className="absolute text-[9px] text-white/60 truncate pointer-events-none"
-                    style={{ left: `${start + 0.5}%`, top: 2, maxWidth: `${width - 1}%` }}>
-                    {m.key.split('-')[0]}
-                  </span>
-                </div>
-              );
+          {/* Time axis */}
+          <div className="relative h-6 mb-2 text-[10px] text-white/30">
+            {['2025-01', '2025-04', '2025-07', '2025-10', '2026-01', '2026-04', '2026-07'].map(d => {
+              const pct = toPercent(d + '-01');
+              if (pct < 0 || pct > 100) return null;
+              return <span key={d} className="absolute" style={{ left: `${pct}%` }}>{d}</span>;
             })}
           </div>
-        ))}
 
-        {/* Today marker */}
-        <div className="relative h-0">
-          <div className="absolute top-0 bottom-0 w-px bg-white/30"
-            style={{ left: `${toPercent(new Date().toISOString().slice(0, 10))}%`, height: '100%', position: 'absolute', top: '-100%' }}>
-          </div>
+          {/* Bars by platform */}
+          {byPlatform.map(([platform, markets]) => (
+            <div key={platform} className="mb-3">
+              <div className="text-[11px] text-white/40 mb-1">{platform}</div>
+              {markets.map(m => {
+                const start = toPercent(m.firstTvlDate!);
+                const end = toPercent(m.maturityDate);
+                const width = Math.max(0.5, end - start);
+                const color = PLATFORM_COLORS[normalizePlatform(m.platform)] || '#666';
+                const isActive = m.status === 'active';
+                return (
+                  <div key={m.key} className="relative h-5 mb-0.5" title={`${m.key}: ${m.firstTvlDate} → ${m.maturityDate} (peak $${(m.peakTvl/1e6).toFixed(1)}M)`}>
+                    <div
+                      className="absolute h-full rounded-sm transition-opacity hover:opacity-100"
+                      style={{
+                        left: `${start}%`,
+                        width: `${width}%`,
+                        background: color,
+                        opacity: isActive ? 0.8 : 0.3,
+                      }}
+                    />
+                    <span className="absolute text-[9px] text-white/60 truncate pointer-events-none"
+                      style={{ left: `${start + 0.5}%`, top: 2, maxWidth: `${width - 1}%` }}>
+                      {m.key.split('-')[0]}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
         </div>
       </div>
     </div>
