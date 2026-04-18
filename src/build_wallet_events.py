@@ -19,6 +19,12 @@ mint_symbols_path = os.path.join(DATA_DIR, 'mint_symbols.json')
 if os.path.exists(mint_symbols_path):
     MINT_SYMBOLS = json.load(open(mint_symbols_path))
 
+# Load per-token prices
+TOKEN_PRICES = {}
+token_prices_path = os.path.join(DATA_DIR, 'token_prices.json')
+if os.path.exists(token_prices_path):
+    TOKEN_PRICES = json.load(open(token_prices_path))
+
 # Load prices for USD estimation
 PRICES = {}
 prices_path = os.path.join(DATA_DIR, 'tvl', 'prices.json')
@@ -109,21 +115,21 @@ def main():
             # Add token changes with symbols and USD
             tc = e.get('tokenChanges', {})
             if tc:
-                price = get_price(date, market) if date else 1.0
+                market_price = get_price(date, market) if date else 1.0
                 changes = []
                 total_usd = 0
                 for mint, delta in tc.items():
                     symbol = MINT_SYMBOLS.get(mint, mint[:8] + '…')
-                    # Price market tokens (SY/PT/YT/underlying). Emission rewards = null
-                    is_priceable = (
-                        symbol.startswith(('SY-', 'PT-', 'YT-'))
-                        or mint in MARKET_UNDERLYING_MINTS
-                        or symbol.endswith('…')  # unmapped = assume market token
-                    )
-                    token_price = price if is_priceable else 0
-                    usd = abs(delta) * token_price
+                    # Resolve price: per-token price > market price for SY/PT/YT > 0
+                    if mint in TOKEN_PRICES:
+                        token_price = TOKEN_PRICES[mint]
+                    elif symbol.startswith(('SY-', 'PT-', 'YT-')) or mint in MARKET_UNDERLYING_MINTS or symbol.endswith('…'):
+                        token_price = market_price
+                    else:
+                        token_price = 0
+                    usd = round(abs(delta) * token_price, 2)
                     total_usd += usd if delta > 0 else -usd
-                    changes.append({'symbol': symbol, 'delta': round(delta, 6), 'usd': round(usd, 2) if token_price > 0 else None})
+                    changes.append({'symbol': symbol, 'delta': round(delta, 6), 'usd': usd if token_price > 0 else None})
                 evt['changes'] = changes
                 evt['usd'] = round(abs(total_usd), 2) if total_usd != 0 else None
 

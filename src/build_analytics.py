@@ -75,6 +75,11 @@ _mint_sym_path = os.path.join(DATA_DIR, 'mint_symbols.json')
 if os.path.exists(_mint_sym_path):
     MINT_SYMBOLS_MAP = json.load(open(_mint_sym_path))
 
+TOKEN_PRICES = {}
+_token_prices_path = os.path.join(DATA_DIR, 'token_prices.json')
+if os.path.exists(_token_prices_path):
+    TOKEN_PRICES = json.load(open(_token_prices_path))
+
 
 def normalize_platform(p):
     if not p: return 'Other'
@@ -158,10 +163,14 @@ def main():
         for mint, delta in e.get('tokenChanges', {}).items():
             if delta <= 0:
                 continue
-            sym = MINT_SYMBOLS_MAP.get(mint, '')
-            is_priceable = mint in PRICEABLE_MINTS or sym.startswith(('SY-', 'PT-', 'YT-')) or not sym or sym.endswith('…')
-            if is_priceable:
+            if mint in TOKEN_PRICES:
+                claim_usd += delta * TOKEN_PRICES[mint]
+            elif mint in PRICEABLE_MINTS:
                 claim_usd += delta * price
+            else:
+                sym = MINT_SYMBOLS_MAP.get(mint, '')
+                if sym.startswith(('SY-', 'PT-', 'YT-')) or not sym or sym.endswith('…'):
+                    claim_usd += delta * price
 
         daily_claims_protocol[date]['count'] += 1
         daily_claims_protocol[date]['usd'] += claim_usd
