@@ -203,6 +203,7 @@ async function main() {
       idleTvl: Math.round(Math.max(0, tvlUsd - incomeTvl - farmTvl - lpTvl)),  // undeployed SY
       liquidityTokens: Math.round(liquidityTokens),
       impliedApy: m.impliedApy || 0,
+      underlyingApy: m.underlyingApy || 0,
       ytPrice: m.ytPriceInAsset || 0,
       ptPrice: m.ptPriceInAsset || 0,
       yieldExposure: m.yieldExposure || 0,

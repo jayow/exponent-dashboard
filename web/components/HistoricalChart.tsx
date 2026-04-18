@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
+  BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
 } from 'recharts';
 
 type FlowData = { inflow: number[]; outflow: number[] };
@@ -15,10 +15,13 @@ type TvlHistory = {
   volume: number[];
   flowByPlatform: Record<string, FlowData>;
   flowByMarket: Record<string, FlowData>;
-  marketMeta?: Record<string, { status: string }>;
+  underlyingApyByMarket?: Record<string, number[]>;
+  impliedApyByMarket?: Record<string, number[]>;
+  marketMeta?: Record<string, { status: string; platform?: string }>;
 };
 
-type Metric = 'tvl' | 'flow' | 'volume';
+type Metric = 'tvl' | 'flow' | 'volume' | 'apy';
+type ApyView = 'current' | 'history';
 type View = 'protocol' | 'platform' | 'market';
 type Range = '30d' | '90d' | '1y' | 'all';
 
@@ -27,6 +30,8 @@ const COLORS = [
   '#a78bfa', '#fb923c', '#34d399', '#f472b6', '#facc15',
   '#818cf8', '#fbbf24', '#22d3ee', '#e879f9', '#a3e635',
 ];
+
+function round2(n: number) { return Math.round(n * 100) / 100; }
 
 function normalizePlatform(p: string): string {
   if (/^Hylo/i.test(p)) return 'Hylo';
@@ -52,6 +57,7 @@ export function HistoricalChart() {
   const [range, setRange] = useState<Range>('all');
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [hideExpired, setHideExpired] = useState(false);
+  const [apyView, setApyView] = useState<ApyView>('current');
 
   useEffect(() => {
     fetch('/tvl-history.json').then(r => r.json()).then(setData).catch(() => null);
@@ -73,6 +79,66 @@ export function HistoricalChart() {
     const cutoff = rangeDays[range];
     const startIdx = Math.max(0, data.dates.length - cutoff);
     const dates = data.dates.slice(startIdx);
+
+    // APY view
+    if (metric === 'apy') {
+      const impliedData = data.impliedApyByMarket || {};
+      const underlyingData = data.underlyingApyByMarket || {};
+      const activeKeys = Array.from(activeMarketKeys);
+
+      if (apyView === 'current') {
+        // Snapshot: horizontal bar chart comparing implied vs underlying
+        const entries = activeKeys
+          .map(k => {
+            const implied = (impliedData[k] || []).slice(-1)[0] || 0;
+            const underlying = (underlyingData[k] || []).slice(-1)[0] || 0;
+            return { key: k, implied, underlying };
+          })
+          .filter(e => e.implied > 0 || e.underlying > 0)
+          .sort((a, b) => b.implied - a.implied);
+
+        const keys = entries.map(e => e.key);
+        const colors: Record<string, string> = {};
+        keys.forEach((k, i) => { colors[k] = COLORS[i % COLORS.length]; });
+
+        const rows = entries.map(e => ({ market: e.key, Implied: round2(e.implied * 100), Underlying: round2(e.underlying * 100) }));
+        return { chartData: rows, series: keys, seriesColors: colors };
+      } else {
+        // Historical: line chart of underlying APY over time for active markets
+        const entries = activeKeys
+          .map(k => {
+            const uVals = (underlyingData[k] || []).slice(startIdx);
+            const iVals = (impliedData[k] || []).slice(startIdx);
+            const hasData = uVals.some(x => x > 0) || iVals.some(x => x > 0);
+            return { key: k, uVals, iVals, hasData };
+          })
+          .filter(e => e.hasData)
+          .sort((a, b) => {
+            const aLast = a.uVals.findLast(x => x > 0) || a.iVals.findLast(x => x > 0) || 0;
+            const bLast = b.uVals.findLast(x => x > 0) || b.iVals.findLast(x => x > 0) || 0;
+            return bLast - aLast;
+          });
+
+        const keys: string[] = [];
+        const colors: Record<string, string> = {};
+        entries.forEach((e, i) => {
+          const color = COLORS[i % COLORS.length];
+          keys.push(e.key);
+          colors[e.key] = color;
+        });
+
+        const rows = dates.map((d, i) => {
+          const row: Record<string, any> = { date: d };
+          entries.forEach(e => {
+            const uVal = (e.uVals[i] || 0) * 100;
+            const iVal = (e.iVals[i] || 0) * 100;
+            row[e.key] = hidden.has(e.key) ? 0 : (iVal > 0 ? iVal : uVal);
+          });
+          return row;
+        });
+        return { chartData: rows, series: keys, seriesColors: colors };
+      }
+    }
 
     // Protocol view
     if (view === 'protocol') {
@@ -189,6 +255,7 @@ export function HistoricalChart() {
   if (!data) return <div className="text-white/30 text-sm py-4">Loading…</div>;
 
   const fmtAxis = (v: number) => {
+    if (metric === 'apy') return `${v.toFixed(0)}%`;
     const abs = Math.abs(v);
     if (abs >= 1e6) return `$${(v / 1e6).toFixed(0)}M`;
     if (abs >= 1e3) return `$${(v / 1e3).toFixed(0)}K`;
@@ -208,160 +275,225 @@ export function HistoricalChart() {
       <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1">
-            {(['tvl', 'flow', 'volume'] as Metric[]).map(m => (
+            {(['tvl', 'flow', 'volume', 'apy'] as Metric[]).map(m => (
               <button key={m} onClick={() => { setMetric(m); setHidden(new Set()); }}
                 className={`text-xs px-3 py-1.5 rounded-lg border transition ${
                   metric === m ? 'border-white/30 bg-white/10 text-white' : 'border-white/10 text-white/40 hover:text-white'
                 }`}>
-                {m === 'tvl' ? 'TVL' : m === 'flow' ? 'Inflow / Outflow' : 'Volume'}
+                {m === 'tvl' ? 'TVL' : m === 'flow' ? 'Inflow / Outflow' : m === 'volume' ? 'Volume' : 'APY'}
               </button>
             ))}
           </div>
-          <div className="flex items-center gap-1">
-            {(['protocol', 'platform', 'market'] as View[]).map(v => (
-              <button key={v} onClick={() => { setView(v); setHidden(new Set()); }}
-                className={`text-xs px-2.5 py-1 rounded-md transition ${
-                  view === v ? 'bg-white/10 text-white' : 'text-white/30 hover:text-white/60'
-                }`}>
-                {v === 'protocol' ? 'Protocol' : v === 'platform' ? 'Platform' : 'Market'}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          {view === 'market' && (
-            <button onClick={() => { setHideExpired(v => !v); setHidden(new Set()); }}
-              className={`text-xs px-2.5 py-1 rounded-md border transition ${
-                hideExpired ? 'border-white/30 bg-white/10 text-white' : 'border-white/10 text-white/30 hover:text-white/60'
-              }`}>
-              Active Only
-            </button>
+          {metric === 'apy' ? (
+            <div className="flex items-center gap-1">
+              {(['current', 'history'] as ApyView[]).map(v => (
+                <button key={v} onClick={() => { setApyView(v); setHidden(new Set()); }}
+                  className={`text-xs px-2.5 py-1 rounded-md transition ${
+                    apyView === v ? 'bg-white/10 text-white' : 'text-white/30 hover:text-white/60'
+                  }`}>
+                  {v === 'current' ? 'Current' : 'Historical'}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="flex items-center gap-1">
+              {(['protocol', 'platform', 'market'] as View[]).map(v => (
+                <button key={v} onClick={() => { setView(v); setHidden(new Set()); }}
+                  className={`text-xs px-2.5 py-1 rounded-md transition ${
+                    view === v ? 'bg-white/10 text-white' : 'text-white/30 hover:text-white/60'
+                  }`}>
+                  {v === 'protocol' ? 'Protocol' : v === 'platform' ? 'Platform' : 'Market'}
+                </button>
+              ))}
+            </div>
           )}
-          <div className="flex items-center gap-1">
-            {(['30d', '90d', '1y', 'all'] as Range[]).map(r => (
-              <button key={r} onClick={() => setRange(r)}
-                className={`text-xs px-2.5 py-1 rounded-md transition ${
-                  range === r ? 'bg-white/10 text-white' : 'text-white/30 hover:text-white/60'
-                }`}>
-                {r === 'all' ? 'All' : r.toUpperCase()}
-              </button>
-            ))}
-          </div>
         </div>
+        {(metric !== 'apy' || apyView === 'history') && (
+          <div className="flex items-center gap-2">
+            {view === 'market' && (
+              <button onClick={() => { setHideExpired(v => !v); setHidden(new Set()); }}
+                className={`text-xs px-2.5 py-1 rounded-md border transition ${
+                  hideExpired ? 'border-white/30 bg-white/10 text-white' : 'border-white/10 text-white/30 hover:text-white/60'
+                }`}>
+                Active Only
+              </button>
+            )}
+            <div className="flex items-center gap-1">
+              {(['30d', '90d', '1y', 'all'] as Range[]).map(r => (
+                <button key={r} onClick={() => setRange(r)}
+                  className={`text-xs px-2.5 py-1 rounded-md transition ${
+                    range === r ? 'bg-white/10 text-white' : 'text-white/30 hover:text-white/60'
+                  }`}>
+                  {r === 'all' ? 'All' : r.toUpperCase()}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="rounded-2xl border border-eclipse-700/60 bg-eclipse-900/40 backdrop-blur p-4">
         <ResponsiveContainer width="100%" height={340}>
-          <BarChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
-            {...(isFlowProtocol || isFlowBreakdown ? { stackOffset: 'sign' as const } : {})}>
-            <XAxis dataKey="date" tick={{ fill: '#8888aa', fontSize: 11 }} axisLine={false} tickLine={false}
-              tickFormatter={fmtTick} interval={interval} />
-            <YAxis tick={{ fill: '#8888aa', fontSize: 11 }} axisLine={false} tickLine={false}
-              tickFormatter={fmtAxis} width={55} />
-            {(isFlowProtocol || isFlowBreakdown) && <ReferenceLine y={0} stroke="#333" />}
-            <Tooltip
-              content={({ active, payload, label }) => {
-                if (!active || !payload?.length) return null;
-                const dt = new Date(label + 'T00:00:00Z');
-                const dateStr = dt.toLocaleDateString('en', { year: 'numeric', month: 'short', day: 'numeric' });
-
-                if (isFlowProtocol) {
-                  const inf = Math.abs(Number(payload.find((p: any) => p.dataKey === 'Inflow')?.value || 0));
-                  const outf = Math.abs(Number(payload.find((p: any) => p.dataKey === 'Outflow')?.value || 0));
-                  const net = inf - outf;
+          {metric === 'apy' && apyView === 'current' ? (
+            <BarChart data={chartData} layout="vertical" margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+              <XAxis type="number" tick={{ fill: '#8888aa', fontSize: 11 }} axisLine={false} tickLine={false}
+                tickFormatter={v => `${v}%`} />
+              <YAxis type="category" dataKey="market" width={130}
+                tick={{ fill: '#c8caff', fontSize: 12 }} axisLine={false} tickLine={false} />
+              <Tooltip
+                contentStyle={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: 8, fontSize: 13, color: '#fff' }}
+                formatter={(v: any, name: any) => [`${Number(v).toFixed(2)}%`, name]}
+              />
+              <Bar dataKey="Implied" fill="#6b66ff" fillOpacity={0.85} barSize={14} radius={[0, 4, 4, 0]} />
+              <Bar dataKey="Underlying" fill="#4ade80" fillOpacity={0.6} barSize={14} radius={[0, 4, 4, 0]} />
+            </BarChart>
+          ) : metric === 'apy' && apyView === 'history' ? (
+            <LineChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+              <XAxis dataKey="date" tick={{ fill: '#8888aa', fontSize: 11 }} axisLine={false} tickLine={false}
+                tickFormatter={fmtTick} interval={interval} />
+              <YAxis tick={{ fill: '#8888aa', fontSize: 11 }} axisLine={false} tickLine={false}
+                tickFormatter={v => `${v.toFixed(0)}%`} width={55} />
+              <Tooltip
+                content={({ active, payload, label }) => {
+                  if (!active || !payload?.length) return null;
+                  const dt = new Date(label + 'T00:00:00Z');
+                  const dateStr = dt.toLocaleDateString('en', { year: 'numeric', month: 'short', day: 'numeric' });
+                  const items = payload.filter((p: any) => Number(p.value) > 0).sort((a: any, b: any) => Number(b.value) - Number(a.value));
+                  if (!items.length) return null;
                   return (
                     <div style={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: 8, padding: '8px 12px', fontSize: 13 }}>
                       <div style={{ color: '#fff', fontWeight: 600, marginBottom: 4 }}>{dateStr}</div>
-                      <div style={{ color: '#4ade80' }}>Inflow: ${(inf / 1e6).toFixed(2)}M</div>
-                      <div style={{ color: '#f87171' }}>Outflow: ${(outf / 1e6).toFixed(2)}M</div>
-                      <div style={{ color: net >= 0 ? '#4ade80' : '#f87171', borderTop: '1px solid #333', marginTop: 4, paddingTop: 4 }}>
-                        Net: {net >= 0 ? '+' : ''}${(net / 1e6).toFixed(2)}M
-                      </div>
-                    </div>
-                  );
-                }
-
-                if (isFlowBreakdown) {
-                  const items: { name: string; inflow: number; outflow: number; color: string }[] = [];
-                  for (const key of series) {
-                    const inf = Math.abs(Number(payload.find((p: any) => p.dataKey === `${key}_in`)?.value || 0));
-                    const outf = Math.abs(Number(payload.find((p: any) => p.dataKey === `${key}_out`)?.value || 0));
-                    if (inf > 0 || outf > 0) items.push({ name: key, inflow: inf, outflow: outf, color: seriesColors[key] });
-                  }
-                  items.sort((a, b) => (b.inflow + b.outflow) - (a.inflow + a.outflow));
-                  return (
-                    <div style={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: 8, padding: '8px 12px', fontSize: 12, maxHeight: 300, overflow: 'auto' }}>
-                      <div style={{ color: '#fff', fontWeight: 600, marginBottom: 4 }}>{dateStr}</div>
-                      {items.map(it => (
-                        <div key={it.name} style={{ display: 'flex', gap: 12, marginBottom: 2 }}>
-                          <span style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 80 }}>
-                            <span style={{ width: 8, height: 8, borderRadius: '50%', background: it.color, display: 'inline-block' }} />
-                            {it.name}
+                      {items.map((p: any) => (
+                        <div key={p.name} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, color: '#ccc' }}>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <span style={{ width: 8, height: 8, borderRadius: '50%', background: p.color || seriesColors[p.name], display: 'inline-block' }} />
+                            {p.name}
                           </span>
-                          <span style={{ color: '#4ade80', fontVariantNumeric: 'tabular-nums' }}>+${(it.inflow / 1e6).toFixed(2)}M</span>
-                          <span style={{ color: '#f87171', fontVariantNumeric: 'tabular-nums' }}>-${(it.outflow / 1e6).toFixed(2)}M</span>
+                          <span style={{ fontVariantNumeric: 'tabular-nums' }}>{Number(p.value).toFixed(2)}%</span>
                         </div>
                       ))}
                     </div>
                   );
-                }
+                }}
+              />
+              {series.map((s) => (
+                <Line key={s} type="monotone" dataKey={s}
+                  stroke={hidden.has(s) ? 'transparent' : seriesColors[s]}
+                  strokeWidth={2} dot={false} connectNulls />
+              ))}
+            </LineChart>
+          ) : (
+            <BarChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
+              {...(isFlowProtocol || isFlowBreakdown ? { stackOffset: 'sign' as const } : {})}>
+              <XAxis dataKey="date" tick={{ fill: '#8888aa', fontSize: 11 }} axisLine={false} tickLine={false}
+                tickFormatter={fmtTick} interval={interval} />
+              <YAxis tick={{ fill: '#8888aa', fontSize: 11 }} axisLine={false} tickLine={false}
+                tickFormatter={fmtAxis} width={55} />
+              {(isFlowProtocol || isFlowBreakdown) && <ReferenceLine y={0} stroke="#333" />}
+              <Tooltip
+                content={({ active, payload, label }) => {
+                  if (!active || !payload?.length) return null;
+                  const dt = new Date(label + 'T00:00:00Z');
+                  const dateStr = dt.toLocaleDateString('en', { year: 'numeric', month: 'short', day: 'numeric' });
 
-                // TVL or Volume tooltip
-                const items = payload.filter((p: any) => Number(p.value) > 0).sort((a: any, b: any) => Number(b.value) - Number(a.value));
-                if (!items.length) return null;
-                return (
-                  <div style={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: 8, padding: '8px 12px', fontSize: 13, maxHeight: 350, overflow: 'auto' }}>
-                    <div style={{ color: '#fff', fontWeight: 600, marginBottom: 4 }}>{dateStr}</div>
-                    {items.map((p: any) => (
-                      <div key={p.name} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, color: '#ccc' }}>
-                        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                          <span style={{ width: 8, height: 8, borderRadius: '50%', background: p.color || seriesColors[p.name] || '#6b66ff', display: 'inline-block' }} />
-                          {p.name}
-                        </span>
-                        <span style={{ fontVariantNumeric: 'tabular-nums' }}>${(Number(p.value) / 1e6).toFixed(2)}M</span>
+                  if (isFlowProtocol) {
+                    const inf = Math.abs(Number(payload.find((p: any) => p.dataKey === 'Inflow')?.value || 0));
+                    const outf = Math.abs(Number(payload.find((p: any) => p.dataKey === 'Outflow')?.value || 0));
+                    const net = inf - outf;
+                    return (
+                      <div style={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: 8, padding: '8px 12px', fontSize: 13 }}>
+                        <div style={{ color: '#fff', fontWeight: 600, marginBottom: 4 }}>{dateStr}</div>
+                        <div style={{ color: '#4ade80' }}>Inflow: ${(inf / 1e6).toFixed(2)}M</div>
+                        <div style={{ color: '#f87171' }}>Outflow: ${(outf / 1e6).toFixed(2)}M</div>
+                        <div style={{ color: net >= 0 ? '#4ade80' : '#f87171', borderTop: '1px solid #333', marginTop: 4, paddingTop: 4 }}>
+                          Net: {net >= 0 ? '+' : ''}${(net / 1e6).toFixed(2)}M
+                        </div>
                       </div>
-                    ))}
-                  </div>
-                );
-              }}
-            />
+                    );
+                  }
 
-            {/* TVL bars */}
-            {metric === 'tvl' && view === 'protocol' && (
-              <Bar dataKey="TVL" fill="#6b66ff" fillOpacity={0.8} />
-            )}
-            {metric === 'tvl' && view !== 'protocol' && (
-              series.map((s, i) => (
-                <Bar key={s} dataKey={s} stackId="1"
-                  fill={hidden.has(s) ? 'transparent' : seriesColors[s]}
-                  fillOpacity={hidden.has(s) ? 0 : 0.8} />
-              ))
-            )}
+                  if (isFlowBreakdown) {
+                    const items: { name: string; inflow: number; outflow: number; color: string }[] = [];
+                    for (const key of series) {
+                      const inf = Math.abs(Number(payload.find((p: any) => p.dataKey === `${key}_in`)?.value || 0));
+                      const outf = Math.abs(Number(payload.find((p: any) => p.dataKey === `${key}_out`)?.value || 0));
+                      if (inf > 0 || outf > 0) items.push({ name: key, inflow: inf, outflow: outf, color: seriesColors[key] });
+                    }
+                    items.sort((a, b) => (b.inflow + b.outflow) - (a.inflow + a.outflow));
+                    return (
+                      <div style={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: 8, padding: '8px 12px', fontSize: 12, maxHeight: 300, overflow: 'auto' }}>
+                        <div style={{ color: '#fff', fontWeight: 600, marginBottom: 4 }}>{dateStr}</div>
+                        {items.map(it => (
+                          <div key={it.name} style={{ display: 'flex', gap: 12, marginBottom: 2 }}>
+                            <span style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 80 }}>
+                              <span style={{ width: 8, height: 8, borderRadius: '50%', background: it.color, display: 'inline-block' }} />
+                              {it.name}
+                            </span>
+                            <span style={{ color: '#4ade80', fontVariantNumeric: 'tabular-nums' }}>+${(it.inflow / 1e6).toFixed(2)}M</span>
+                            <span style={{ color: '#f87171', fontVariantNumeric: 'tabular-nums' }}>-${(it.outflow / 1e6).toFixed(2)}M</span>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  }
 
-            {/* Flow bars */}
-            {isFlowProtocol && (
-              <>
-                <Bar dataKey="Inflow" fill="#4ade80" fillOpacity={0.7} stackId="s" />
-                <Bar dataKey="Outflow" fill="#f87171" fillOpacity={0.7} stackId="s" />
-              </>
-            )}
-            {isFlowBreakdown && (
-              series.flatMap((k) => [
-                <Bar key={`${k}_in`} dataKey={`${k}_in`} fill={seriesColors[k]} fillOpacity={0.8} stackId="in" />,
-                <Bar key={`${k}_out`} dataKey={`${k}_out`} fill={seriesColors[k]} fillOpacity={0.4} stackId="out" />,
-              ])
-            )}
+                  // TVL or Volume tooltip
+                  const items = payload.filter((p: any) => Number(p.value) > 0).sort((a: any, b: any) => Number(b.value) - Number(a.value));
+                  if (!items.length) return null;
+                  return (
+                    <div style={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: 8, padding: '8px 12px', fontSize: 13, maxHeight: 350, overflow: 'auto' }}>
+                      <div style={{ color: '#fff', fontWeight: 600, marginBottom: 4 }}>{dateStr}</div>
+                      {items.map((p: any) => (
+                        <div key={p.name} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, color: '#ccc' }}>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <span style={{ width: 8, height: 8, borderRadius: '50%', background: p.color || seriesColors[p.name] || '#6b66ff', display: 'inline-block' }} />
+                            {p.name}
+                          </span>
+                          <span style={{ fontVariantNumeric: 'tabular-nums' }}>${(Number(p.value) / 1e6).toFixed(2)}M</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                }}
+              />
 
-            {/* Volume bars */}
-            {metric === 'volume' && view === 'protocol' && (
-              <Bar dataKey="Volume" fill="#38bdf8" fillOpacity={0.7} />
-            )}
-            {metric === 'volume' && view !== 'protocol' && (
-              series.map((k) => (
-                <Bar key={k} dataKey={k} stackId="1" fill={seriesColors[k]} fillOpacity={0.7} />
-              ))
-            )}
-          </BarChart>
+              {/* TVL bars */}
+              {metric === 'tvl' && view === 'protocol' && (
+                <Bar dataKey="TVL" fill="#6b66ff" fillOpacity={0.8} />
+              )}
+              {metric === 'tvl' && view !== 'protocol' && (
+                series.map((s, i) => (
+                  <Bar key={s} dataKey={s} stackId="1"
+                    fill={hidden.has(s) ? 'transparent' : seriesColors[s]}
+                    fillOpacity={hidden.has(s) ? 0 : 0.8} />
+                ))
+              )}
+
+              {/* Flow bars */}
+              {isFlowProtocol && (
+                <>
+                  <Bar dataKey="Inflow" fill="#4ade80" fillOpacity={0.7} stackId="s" />
+                  <Bar dataKey="Outflow" fill="#f87171" fillOpacity={0.7} stackId="s" />
+                </>
+              )}
+              {isFlowBreakdown && (
+                series.flatMap((k) => [
+                  <Bar key={`${k}_in`} dataKey={`${k}_in`} fill={seriesColors[k]} fillOpacity={0.8} stackId="in" />,
+                  <Bar key={`${k}_out`} dataKey={`${k}_out`} fill={seriesColors[k]} fillOpacity={0.4} stackId="out" />,
+                ])
+              )}
+
+              {/* Volume bars */}
+              {metric === 'volume' && view === 'protocol' && (
+                <Bar dataKey="Volume" fill="#38bdf8" fillOpacity={0.7} />
+              )}
+              {metric === 'volume' && view !== 'protocol' && (
+                series.map((k) => (
+                  <Bar key={k} dataKey={k} stackId="1" fill={seriesColors[k]} fillOpacity={0.7} />
+                ))
+              )}
+            </BarChart>
+          )}
         </ResponsiveContainer>
 
         {/* Legend */}
@@ -372,7 +504,29 @@ export function HistoricalChart() {
               <span className="flex items-center gap-1 text-[11px]"><span className="w-2.5 h-2.5 rounded-full bg-red-400" /> Outflow</span>
             </>
           )}
-          {view !== 'protocol' && metric === 'tvl' && (
+          {metric === 'apy' && apyView === 'current' && (
+            <>
+              <span className="flex items-center gap-1 text-[11px]"><span className="w-2.5 h-2.5 rounded" style={{ background: '#6b66ff' }} /> Implied</span>
+              <span className="flex items-center gap-1 text-[11px]"><span className="w-2.5 h-2.5 rounded" style={{ background: '#4ade80' }} /> Underlying</span>
+            </>
+          )}
+          {metric === 'apy' && apyView === 'history' && (
+            <>
+              <button
+                onClick={() => { if (hidden.size === series.length) setHidden(new Set()); else setHidden(new Set(series)); }}
+                className="text-[10px] px-2 py-0.5 rounded border border-white/10 text-white/30 hover:text-white/60 transition mr-1">
+                {hidden.size === series.length ? 'Show All' : 'Hide All'}
+              </button>
+              {series.map(s => (
+                <button key={s} onClick={() => toggleSeries(s)}
+                  className={`flex items-center gap-1 text-[11px] transition cursor-pointer ${hidden.has(s) ? 'opacity-30' : 'opacity-100 hover:opacity-80'}`}>
+                  <span className="w-2.5 h-2.5 rounded-full" style={{ background: seriesColors[s] }} />
+                  <span className="text-white/50">{s}</span>
+                </button>
+              ))}
+            </>
+          )}
+          {metric === 'tvl' && view !== 'protocol' && (
             <>
               <button
                 onClick={() => { if (hidden.size === series.length) setHidden(new Set()); else setHidden(new Set(series)); }}

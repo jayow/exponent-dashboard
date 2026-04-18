@@ -308,16 +308,131 @@ def main():
     peak_date = all_dates[protocol_tvl.index(peak)]
     first_date = next((d for d, v in zip(all_dates, protocol_tvl) if v > 0), all_dates[0])
 
-    # Count unique holders
+    # APY history — underlying APY from exchange rate changes
+    print('Computing APY history...')
+    underlying_apy_by_market = {}
+    for sy, mkts in sy_to_markets.items():
+        rate_series = sy_daily_rate.get(sy)
+        if not rate_series:
+            continue
+        filled_rates = fill_forward(rate_series, all_dates, default=1.0)
+        for m in mkts:
+            key = m['key']
+            mat_date = m.get('maturityDate', '9999-12-31')
+            apy_series = []
+            for i, d in enumerate(all_dates):
+                if d >= mat_date or i < 7:
+                    apy_series.append(0)
+                    continue
+                rate_now = filled_rates.get(d) or 1.0
+                rate_7d_ago = filled_rates.get(all_dates[i - 7]) or rate_now
+                if rate_7d_ago > 0 and rate_now > rate_7d_ago:
+                    weekly_return = rate_now / rate_7d_ago
+                    apy = (weekly_return ** (365 / 7)) - 1
+                    apy_series.append(round(apy * 10000) / 10000)
+                else:
+                    apy_series.append(0)
+            if max(apy_series) > 0:
+                underlying_apy_by_market[key] = apy_series
+
+    # Implied APY — load from daily snapshots + current live data
+    implied_apy_by_market = {}
+    apy_snapshots_path = os.path.join(DATA_DIR, 'tvl', 'apy_snapshots.json')
+    apy_snapshots = {}
+    if os.path.exists(apy_snapshots_path):
+        apy_snapshots = json.load(open(apy_snapshots_path))
+
+    # Record today's implied APY from live data
+    live_path = os.path.join(ROOT, 'web', 'public', 'markets-live.json')
+    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    if os.path.exists(live_path):
+        live = json.load(open(live_path))
+        for lm in live.get('markets', []):
+            d = datetime.strptime(lm['maturity'], '%Y-%m-%d')
+            dd = f'{d.day:02d}'
+            mmm = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.month - 1]
+            yy = str(d.year)[-2:]
+            mkey = f'{lm["ticker"]}-{dd}{mmm}{yy}'
+            if mkey not in apy_snapshots:
+                apy_snapshots[mkey] = {}
+            apy_snapshots[mkey][today] = {
+                'implied': round(lm.get('impliedApy', 0), 6),
+                'underlying': round(lm.get('underlyingApy', 0), 6),
+            }
+    json.dump(apy_snapshots, open(apy_snapshots_path, 'w'), indent=2)
+
+    # Build implied APY time series from snapshots
+    for mkey, snaps in apy_snapshots.items():
+        implied_series = []
+        for d in all_dates:
+            snap = snaps.get(d)
+            implied_series.append(round(snap['implied'], 6) if snap else 0)
+        # Fill forward
+        last_val = 0
+        for i in range(len(implied_series)):
+            if implied_series[i] > 0:
+                last_val = implied_series[i]
+            elif last_val > 0:
+                implied_series[i] = last_val
+        if max(implied_series) > 0:
+            implied_apy_by_market[mkey] = implied_series
+
+    # Holder analytics from current snapshot
     holders_path = os.path.join(ROOT, 'web', 'public', 'holders.json')
     unique_holders = 0
+    top_holders = []
+    holder_concentration = {}
     if os.path.exists(holders_path):
         holders_data = json.load(open(holders_path))
         all_wallets = set()
-        for snap in holders_data.values():
+        wallet_total_usd = defaultdict(float)
+        for snap_key, snap in holders_data.items():
             for h in snap.get('top', []):
-                all_wallets.add(h.get('owner', ''))
+                owner = h.get('owner', '')
+                all_wallets.add(owner)
+                wallet_total_usd[owner] += h.get('usd', 0)
         unique_holders = len(all_wallets)
+
+        # Top holders across all markets
+        top_holders = sorted(
+            [{'wallet': w, 'totalUsd': round(v, 2)} for w, v in wallet_total_usd.items() if v > 0],
+            key=lambda x: -x['totalUsd']
+        )[:50]
+
+        # Concentration per market
+        for snap_key, snap in holders_data.items():
+            holders_list = snap.get('top', [])
+            total = snap.get('totalBalance', 0)
+            if total > 0 and len(holders_list) > 0:
+                top1 = holders_list[0]['balance'] / total if holders_list else 0
+                top5_sum = sum(h['balance'] for h in holders_list[:5]) / total
+                top10_sum = sum(h['balance'] for h in holders_list[:10]) / total
+                holder_concentration[snap_key] = {
+                    'holders': snap.get('holders', 0),
+                    'top1Pct': round(top1 * 100, 1),
+                    'top5Pct': round(top5_sum * 100, 1),
+                    'top10Pct': round(top10_sum * 100, 1),
+                }
+
+    # Market lifecycle data
+    lifecycle = []
+    for m in markets:
+        key = m['key']
+        tvl_arr = by_market.get(key, [])
+        first_tvl_date = None
+        for i, v in enumerate(tvl_arr):
+            if v > 0:
+                first_tvl_date = all_dates[i]
+                break
+        lifecycle.append({
+            'key': key,
+            'platform': m.get('platform', ''),
+            'status': m.get('status', ''),
+            'maturityDate': m.get('maturityDate', ''),
+            'firstTvlDate': first_tvl_date,
+            'peakTvl': round(max(tvl_arr)) if tvl_arr else 0,
+        })
+    lifecycle.sort(key=lambda x: x.get('firstTvlDate') or '9999')
 
     output = {
         'generatedAt': datetime.now(timezone.utc).isoformat(),
@@ -332,6 +447,11 @@ def main():
         'volume': volume_series,
         'flowByPlatform': flow_by_platform,
         'flowByMarket': flow_by_market,
+        'underlyingApyByMarket': underlying_apy_by_market,
+        'impliedApyByMarket': implied_apy_by_market,
+        'topHolders': top_holders,
+        'holderConcentration': holder_concentration,
+        'lifecycle': lifecycle,
         'stats': {
             'activeMarkets': active_markets,
             'expiredMarkets': expired_markets,
