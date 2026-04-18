@@ -63,6 +63,36 @@ if os.path.exists(api_path):
 MARKET_UNDERLYING_MINTS.discard('')
 
 
+# Extended mint→market mapping for all 88 markets (active + expired)
+ALL_MINT_TO_MARKET = {}
+if os.path.exists(markets_path):
+    for m in json.load(open(markets_path)):
+        for f in ('ytMint', 'ptMint', 'syMint'):
+            mint = m.get(f, '')
+            if mint:
+                ALL_MINT_TO_MARKET[mint] = m['key']
+
+# Also add from API for active markets
+if os.path.exists(api_path):
+    import datetime as _dt
+    for m in json.load(open(api_path)):
+        t = m['underlyingAsset']['ticker']
+        mat = _dt.datetime.fromtimestamp(m['maturityDateUnixTs'], tz=_dt.timezone.utc).strftime('%d%b%y').upper()
+        key = f'{t}-{mat}'
+        for f in ('ytMint', 'ptMint', 'syMint'):
+            if m.get(f): ALL_MINT_TO_MARKET[m[f]] = key
+
+
+def resolve_market(event):
+    """Try to identify market from token changes if not already set."""
+    if event.get('market'):
+        return event['market']
+    for mint in event.get('tokenChanges', {}):
+        if mint in ALL_MINT_TO_MARKET:
+            return ALL_MINT_TO_MARKET[mint]
+    return ''
+
+
 def get_price(date, market):
     pk = MARKET_PRICE_KEY.get(market, 'USD')
     return PRICES.get(pk, {}).get(date, 1.0)
@@ -100,7 +130,7 @@ def main():
             if not signer: continue
 
             bt = e.get('blockTime', 0)
-            market = e.get('market', '')
+            market = resolve_market(e)
             date = datetime.fromtimestamp(bt, tz=timezone.utc).strftime('%Y-%m-%d') if bt else ''
 
             # Re-classify misclassified events using extended instruction map
