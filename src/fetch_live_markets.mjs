@@ -57,11 +57,12 @@ async function main() {
     const mk = markets.find(m => m.quoteAsset?.mint === mint);
     const ticker = mk?.quoteAsset?.ticker || '';
     if (/USD|USX/i.test(ticker)) priceMap[mint] = 1.0;
-    else if (/BTC/i.test(ticker)) priceMap[mint] = 95000;
-    else priceMap[mint] = priceMap[SOL_MINT] || 175;
-    console.log(`  ${mint.slice(0,8)}: $${priceMap[mint]} (fallback)`);
+    else if (/BTC/i.test(ticker)) priceMap[mint] = priceMap[SOL_MINT] ? priceMap[SOL_MINT] * 1080 : 0;
+    else priceMap[mint] = priceMap[SOL_MINT] || 0;
+    console.log(`  ${mint.slice(0,8)}: $${priceMap[mint]} (fallback from ${ticker || 'unknown'})`);
   }
-  const solPrice = priceMap[SOL_MINT] || 175;
+  if (!priceMap[SOL_MINT]) { console.error('FATAL: No SOL price available'); process.exit(1); }
+  const solPrice = priceMap[SOL_MINT];
   console.log(`SOL=$${solPrice}`);
 
   // 4) Fetch SY + PT + YT mint supplies for TVL breakdown

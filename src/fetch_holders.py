@@ -20,9 +20,17 @@ OUT = os.path.join(ROOT, 'web/public/holders.json')
 EXPONENT_PROGRAM = 'ExponentnaRg3CQbW6dqQNZKXp7gtZ9DGMp1cwC4HAS7'
 CLMM_PROGRAM = 'XPC1MM4dYACDfykNuXYZ5una2DsMDWL24CrYubCvarC'
 TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
-YT_DISC = 'e35c92311d55475e'
-LP_DISC = '69f125c8e002fc5a'
-CLMM_MARKET_DISC = 'f2f01a0f94bab9cd'
+
+# Anchor discriminators (SHA-256 of "account:<Name>" truncated to 8 bytes)
+YT_DISC = 'e35c92311d55475e'   # YieldTokenPosition
+LP_DISC = '69f125c8e002fc5a'   # LpPosition
+CLMM_MARKET_DISC = 'f2f01a0f94bab9cd'  # CLMM MarketThree
+
+# Account struct sizes: 8(disc) + 32(owner) + 32(vault/market) + 8(balance) + 40(tracker) + 4 + N*40(emissions)
+# YieldTokenPosition: 124 (0 emissions), 164 (1), 204 (2)
+YT_SIZES = [124, 164, 204]
+# LpPosition: 128 (0+1 trackers), 168 (1+1), 208 (1+2)
+LP_SIZES = [128, 168, 208]
 
 def get_all_yt_positions():
     """Fetch all YieldPosition accounts from Exponent program.
@@ -32,7 +40,7 @@ def get_all_yt_positions():
     disc_b58 = base58.b58encode(disc_bytes).decode()
     positions = []
     import base64
-    for size in [124, 164, 204]:
+    for size in YT_SIZES:
         result = rpc('getProgramAccounts', [
             EXPONENT_PROGRAM,
             {
@@ -116,7 +124,7 @@ def main():
     lp_disc_b58 = base58.b58encode(lp_disc_bytes).decode()
     lp_positions = []
     import base64 as b64_lp
-    for size in [128, 168, 208]:
+    for size in LP_SIZES:
         result = rpc('getProgramAccounts', [
             EXPONENT_PROGRAM,
             {
