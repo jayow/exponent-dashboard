@@ -16,9 +16,10 @@ type WalletEvent = {
 
 type Filter = 'buyYt' | 'sellYt' | 'claimYield' | 'addLiq' | 'removeLiq' | 'strip' | 'redeemPt' | 'buyPt' | 'sellPt';
 const ALL_FILTERS: Filter[] = ['buyYt', 'sellYt', 'buyPt', 'sellPt', 'claimYield', 'addLiq', 'removeLiq', 'strip', 'redeemPt'];
-const LABEL: Record<Filter, string> = {
+const LABEL: Record<string, string> = {
   buyYt:'Buy YT', sellYt:'Sell YT', buyPt:'Buy PT', sellPt:'Sell PT',
-  claimYield:'Claim', addLiq:'Add LP', removeLiq:'Remove LP', strip:'Strip', redeemPt:'Redeem',
+  claimYield:'Claim Yield', addLiq:'Add Liquidity', removeLiq:'Remove Liquidity',
+  strip:'Strip', redeemPt:'Redeem PT',
 };
 const COLOR: Record<string, string> = {
   buyYt:'text-emerald-400', sellYt:'text-rose-400', buyPt:'text-sky-400', sellPt:'text-orange-400',
@@ -112,23 +113,21 @@ function WalletView() {
               <th className="th-sortable cell text-left" onClick={() => onSort('date')}>Date{arrow('date')}</th>
               <th className="th-sortable cell text-left" onClick={() => onSort('market')}>Market{arrow('market')}</th>
               <th className="th-sortable cell text-left" onClick={() => onSort('action')}>Action{arrow('action')}</th>
-              <th className="cell text-left">Instruction</th>
               <th className="cell text-right">USD</th>
               <th className="cell text-left">Token Changes</th>
               <th className="cell">Tx</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-eclipse-700/40 text-[13px]">
-            {events === null && <tr><td className="cell text-white/30" colSpan={7}>Loading…</td></tr>}
-            {visible.length === 0 && events !== null && <tr><td className="cell text-white/30" colSpan={7}>No events found.</td></tr>}
+            {events === null && <tr><td className="cell text-white/30" colSpan={6}>Loading…</td></tr>}
+            {visible.length === 0 && events !== null && <tr><td className="cell text-white/30" colSpan={6}>No events found.</td></tr>}
             {visible.map((e, i) => (
               <tr key={`${e.sig}-${i}`} className="hover:bg-eclipse-800/40">
                 <td className="cell text-white/50 font-mono text-xs whitespace-nowrap">
                   {new Date(e.blockTime * 1000).toISOString().replace('T', ' ').slice(0, 19)}
                 </td>
                 <td className="cell text-white/70">{e.market || '–'}</td>
-                <td className="cell"><span className={COLOR[e.action] || 'text-white/50'}>{e.action}</span></td>
-                <td className="cell text-white/40 text-xs">{e.instr || '–'}</td>
+                <td className="cell"><span className={COLOR[e.action] || 'text-white/50'}>{LABEL[e.action] || e.action}</span></td>
                 <td className="cell text-right tabular-nums text-white/60">
                   {e.usd ? `$${e.usd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '–'}
                 </td>
