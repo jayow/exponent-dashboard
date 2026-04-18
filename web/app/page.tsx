@@ -2,12 +2,11 @@
 import { useState } from 'react';
 import { TvlOverview } from '@/components/TvlOverview';
 import { HistoricalChart } from '@/components/HistoricalChart';
-import { ActivityAnalytics } from '@/components/ActivityAnalytics';
 import { MarketLifecycle } from '@/components/MarketLifecycle';
 import { HolderAnalytics } from '@/components/HolderAnalytics';
 import { MarketCards } from '@/components/MarketCards';
 
-type Tab = 'markets' | 'activity' | 'lifecycle' | 'holders';
+type Tab = 'markets' | 'lifecycle' | 'holders';
 
 export default function HomePage() {
   const [tab, setTab] = useState<Tab>('markets');
@@ -33,7 +32,6 @@ export default function HomePage() {
         <div className="flex items-center gap-1 mb-4">
           {([
             { key: 'markets', label: 'Markets' },
-            { key: 'activity', label: 'Activity' },
             { key: 'lifecycle', label: 'Lifecycle' },
             { key: 'holders', label: 'Holders' },
           ] as { key: Tab; label: string }[]).map(t => (
@@ -47,7 +45,6 @@ export default function HomePage() {
         </div>
 
         {tab === 'markets' && <MarketCards />}
-        {tab === 'activity' && <ActivityAnalytics />}
         {tab === 'lifecycle' && <MarketLifecycle />}
         {tab === 'holders' && <HolderAnalytics />}
       </div>

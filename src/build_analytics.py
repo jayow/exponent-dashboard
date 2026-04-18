@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
 """Build analytics from enriched indexed events.
 
-Reads: data/index/enriched/*.jsonl
+Reads: data/index/enriched/*.jsonl, web/public/holders.json, data/tvl/prices.json
 Writes: web/public/analytics.json
 
-Analytics computed:
-- Trading volume per market/platform/protocol (daily)
-- Historical unique holders over time
-- Claim activity per user/market/platform
-- Top traders leaderboard
-- Market activity heatmap
-- Position duration estimates
-- Redemption speed post-maturity
+Output structured for frontend integration:
+- Daily activity + claims → HistoricalChart (protocol/platform/market)
+- Holder growth + retention → Holders tab
+- Enriched top holders (merged trader + holder + claimer data)
+- Market activity columns → MarketCards
 """
 import json, sys, os, glob
 from datetime import datetime, timezone
@@ -23,28 +20,41 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ENRICHED_DIR = os.path.join(DATA_DIR, 'index', 'enriched')
 OUT = os.path.join(ROOT, 'web', 'public', 'analytics.json')
 
-# Load market metadata for platform mapping
 MARKETS_PATH = os.path.join(DATA_DIR, 'tvl', 'all_markets.json')
 MARKET_META = {}
 MARKET_PLATFORM = {}
+MARKET_DECIMALS = {}
+MARKET_PRICE_KEY = {}
 if os.path.exists(MARKETS_PATH):
     for m in json.load(open(MARKETS_PATH)):
         MARKET_META[m['key']] = m
         MARKET_PLATFORM[m['key']] = m.get('platform', 'Unknown')
+        MARKET_DECIMALS[m['key']] = m.get('underlyingDecimals', 6)
+        qt = (m.get('quoteTicker') or '').upper()
+        if qt in ('USD', 'USDC', 'USDT', 'USX', 'EUSX'):
+            MARKET_PRICE_KEY[m['key']] = 'USD'
+        elif qt == 'XSOL':
+            MARKET_PRICE_KEY[m['key']] = 'xSOL'
+        elif 'BTC' in qt:
+            MARKET_PRICE_KEY[m['key']] = 'BTC'
+        else:
+            MARKET_PRICE_KEY[m['key']] = 'SOL'
 
-# Load token identity for expired market mint mapping
-TOKEN_IDS = {}
-token_ids_path = os.path.join(DATA_DIR, 'tvl', 'sy_token_ids.json')
-if os.path.exists(token_ids_path):
-    TOKEN_IDS = json.load(open(token_ids_path))
+# Load prices for USD conversion
+PRICES = {}
+prices_path = os.path.join(DATA_DIR, 'tvl', 'prices.json')
+if os.path.exists(prices_path):
+    PRICES = json.load(open(prices_path))
 
-# Build extended mint→market mapping (active + expired)
-MINT_TO_MARKET = {}
-for m_key, m_data in MARKET_META.items():
-    for field in ('ytMint', 'ptMint', 'syMint'):
-        mint = m_data.get(field, '')
-        if mint:
-            MINT_TO_MARKET[mint] = m_key
+# Load known protocol addresses
+PROTOCOL_ADDRS = set()
+api_path = os.path.join(DATA_DIR, 'exponent_markets_api.json')
+if os.path.exists(api_path):
+    for am in json.load(open(api_path)):
+        for f in ('vaultAddress', 'syMint', 'ptMint', 'ytMint'):
+            if am.get(f): PROTOCOL_ADDRS.add(am[f])
+        for a in am.get('legacyMarketAddresses', []): PROTOCOL_ADDRS.add(a)
+        for a in am.get('orderbookAddresses', []): PROTOCOL_ADDRS.add(a)
 
 
 def normalize_platform(p):
@@ -59,8 +69,11 @@ def normalize_platform(p):
     return p
 
 
+def get_price(date, price_key):
+    return PRICES.get(price_key, {}).get(date, PRICES.get('USD', {}).get(date, 1.0))
+
+
 def load_all_events():
-    """Load all enriched events, sorted by blockTime."""
     events = []
     for f in glob.glob(os.path.join(ENRICHED_DIR, '*.jsonl')):
         for line in open(f):
@@ -80,34 +93,71 @@ def main():
     print(f'  {len(events):,} events loaded')
 
     # ========================================
-    # 1. Trading volume per day (protocol / platform / market)
+    # 1. Daily activity by protocol/platform/market
     # ========================================
-    print('Computing trading volumes...')
-    daily_volume_protocol = defaultdict(float)
-    daily_volume_platform = defaultdict(lambda: defaultdict(float))
-    daily_volume_market = defaultdict(lambda: defaultdict(float))
-    trade_actions = {'buyYt', 'sellYt', 'buyPt', 'sellPt', 'addLiq', 'removeLiq', 'strip', 'redeemPt'}
+    print('Computing daily activity...')
+    action_types = ['buyYt', 'sellYt', 'buyPt', 'sellPt', 'addLiq', 'removeLiq', 'claimYield', 'redeemPt', 'strip']
+    daily_activity_protocol = defaultdict(lambda: defaultdict(int))
+    daily_activity_platform = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
+    daily_activity_market = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
 
     for e in events:
         action = e.get('action')
-        if action not in trade_actions:
-            continue
+        if not action: continue
         bt = e.get('blockTime')
         if not bt: continue
         date = datetime.fromtimestamp(bt, tz=timezone.utc).strftime('%Y-%m-%d')
         market = e.get('market', 'unknown')
         platform = normalize_platform(MARKET_PLATFORM.get(market, ''))
 
-        # Volume = sum of absolute token changes (rough USD proxy from raw amounts)
-        vol = sum(abs(v) for v in e.get('tokenChanges', {}).values())
-        daily_volume_protocol[date] += vol
-        daily_volume_platform[platform][date] += vol
-        daily_volume_market[market][date] += vol
+        daily_activity_protocol[date][action] += 1
+        daily_activity_platform[platform][date][action] += 1
+        daily_activity_market[market][date][action] += 1
 
     # ========================================
-    # 2. Historical unique holders over time
+    # 2. Daily claims with USD amounts
     # ========================================
-    print('Computing holder growth...')
+    print('Computing claims with USD...')
+    daily_claims_protocol = defaultdict(lambda: {'count': 0, 'usd': 0.0})
+    daily_claims_platform = defaultdict(lambda: defaultdict(lambda: {'count': 0, 'usd': 0.0}))
+    daily_claims_market = defaultdict(lambda: defaultdict(lambda: {'count': 0, 'usd': 0.0}))
+
+    claims_by_user = defaultdict(lambda: {'count': 0, 'totalUsd': 0.0, 'markets': set(), 'first': None, 'last': None})
+
+    for e in events:
+        if e.get('action') != 'claimYield': continue
+        bt = e.get('blockTime', 0)
+        date = datetime.fromtimestamp(bt, tz=timezone.utc).strftime('%Y-%m-%d')
+        market = e.get('market', 'unknown')
+        platform = normalize_platform(MARKET_PLATFORM.get(market, ''))
+        signer = e.get('signer', '')
+
+        # Estimate claim USD from token changes (positive values = received)
+        claim_usd = 0
+        pk = MARKET_PRICE_KEY.get(market, 'USD')
+        price = get_price(date, pk)
+        for mint, delta in e.get('tokenChanges', {}).items():
+            if delta > 0:
+                claim_usd += delta * price
+
+        daily_claims_protocol[date]['count'] += 1
+        daily_claims_protocol[date]['usd'] += claim_usd
+        daily_claims_platform[platform][date]['count'] += 1
+        daily_claims_platform[platform][date]['usd'] += claim_usd
+        daily_claims_market[market][date]['count'] += 1
+        daily_claims_market[market][date]['usd'] += claim_usd
+
+        cu = claims_by_user[signer]
+        cu['count'] += 1
+        cu['totalUsd'] += claim_usd
+        cu['markets'].add(market)
+        if not cu['first'] or bt < cu['first']: cu['first'] = bt
+        if not cu['last'] or bt > cu['last']: cu['last'] = bt
+
+    # ========================================
+    # 3. Holder growth + retention
+    # ========================================
+    print('Computing holder growth + retention...')
     first_seen = {}
     for e in events:
         signer = e.get('signer', '')
@@ -116,59 +166,47 @@ def main():
         if signer not in first_seen or bt < first_seen[signer]:
             first_seen[signer] = bt
 
-    # Build cumulative holder count per day
+    all_dates_set = set()
+    all_dates_set.update(daily_activity_protocol.keys())
     holder_dates = defaultdict(int)
     for signer, bt in first_seen.items():
-        date = datetime.fromtimestamp(bt, tz=timezone.utc).strftime('%Y-%m-%d')
-        holder_dates[date] += 1
+        d = datetime.fromtimestamp(bt, tz=timezone.utc).strftime('%Y-%m-%d')
+        holder_dates[d] += 1
+        all_dates_set.add(d)
 
-    all_dates = sorted(set(
-        list(daily_volume_protocol.keys()) +
-        list(holder_dates.keys())
-    ))
+    all_dates = sorted(all_dates_set)
     cumulative_holders = []
     running = 0
     for d in all_dates:
         running += holder_dates.get(d, 0)
         cumulative_holders.append(running)
 
-    # ========================================
-    # 3. Claim activity
-    # ========================================
-    print('Computing claim activity...')
-    claims_by_user = defaultdict(lambda: {'count': 0, 'markets': set(), 'first': None, 'last': None})
-    claims_by_market = defaultdict(lambda: defaultdict(float))
-    claims_by_platform = defaultdict(lambda: defaultdict(float))
-    daily_claims_protocol = defaultdict(int)
-
+    # Retention: new vs returning per week
+    weekly_new = defaultdict(int)
+    weekly_returning = defaultdict(int)
+    seen = set()
     for e in events:
-        if e.get('action') != 'claimYield':
-            continue
+        action = e.get('action')
+        if not action: continue
         signer = e.get('signer', '')
         bt = e.get('blockTime', 0)
-        date = datetime.fromtimestamp(bt, tz=timezone.utc).strftime('%Y-%m-%d')
-        market = e.get('market', 'unknown')
-        platform = normalize_platform(MARKET_PLATFORM.get(market, ''))
+        week = datetime.fromtimestamp(bt, tz=timezone.utc).strftime('%Y-W%W')
+        if signer not in seen:
+            weekly_new[week] += 1
+            seen.add(signer)
+        else:
+            weekly_returning[week] += 1
 
-        claims_by_user[signer]['count'] += 1
-        claims_by_user[signer]['markets'].add(market)
-        if not claims_by_user[signer]['first'] or bt < claims_by_user[signer]['first']:
-            claims_by_user[signer]['first'] = bt
-        if not claims_by_user[signer]['last'] or bt > claims_by_user[signer]['last']:
-            claims_by_user[signer]['last'] = bt
-
-        claims_by_market[market][date] += 1
-        claims_by_platform[platform][date] += 1
-        daily_claims_protocol[date] += 1
+    weeks = sorted(set(list(weekly_new.keys()) + list(weekly_returning.keys())))
 
     # ========================================
-    # 4. Top traders by transaction count + action breakdown
+    # 4. Enriched user profiles (merge trader + holder + claimer)
     # ========================================
-    print('Computing top traders...')
-    trader_stats = defaultdict(lambda: {
+    print('Building enriched user profiles...')
+    user_profiles = defaultdict(lambda: {
         'txs': 0, 'buyYt': 0, 'sellYt': 0, 'buyPt': 0, 'sellPt': 0,
-        'addLiq': 0, 'removeLiq': 0, 'claimYield': 0, 'strip': 0, 'redeemPt': 0,
-        'markets': set(), 'first': None, 'last': None,
+        'addLiq': 0, 'removeLiq': 0, 'claimYield': 0, 'redeemPt': 0, 'strip': 0,
+        'markets': set(), 'first': None, 'last': None, 'claimUsd': 0.0,
     })
 
     for e in events:
@@ -177,182 +215,153 @@ def main():
         signer = e.get('signer', '')
         bt = e.get('blockTime', 0)
         market = e.get('market', 'unknown')
+        up = user_profiles[signer]
+        up['txs'] += 1
+        if action in up: up[action] += 1
+        up['markets'].add(market)
+        if not up['first'] or bt < up['first']: up['first'] = bt
+        if not up['last'] or bt > up['last']: up['last'] = bt
 
-        ts = trader_stats[signer]
-        ts['txs'] += 1
-        if action in ts:
-            ts[action] += 1
-        ts['markets'].add(market)
-        if not ts['first'] or bt < ts['first']:
-            ts['first'] = bt
-        if not ts['last'] or bt > ts['last']:
-            ts['last'] = bt
+    for signer, cu in claims_by_user.items():
+        user_profiles[signer]['claimUsd'] = cu['totalUsd']
 
-    top_traders = sorted(
-        [{'wallet': w, **{k: v for k, v in s.items() if k != 'markets'}, 'markets': len(s['markets']),
-          'firstDate': datetime.fromtimestamp(s['first'], tz=timezone.utc).strftime('%Y-%m-%d') if s['first'] else None,
-          'lastDate': datetime.fromtimestamp(s['last'], tz=timezone.utc).strftime('%Y-%m-%d') if s['last'] else None,
-          } for w, s in trader_stats.items()],
-        key=lambda x: -x['txs']
-    )[:100]
+    # Merge with current holder USD values
+    holders_path = os.path.join(ROOT, 'web', 'public', 'holders.json')
+    wallet_holdings = defaultdict(float)
+    if os.path.exists(holders_path):
+        for snap in json.load(open(holders_path)).values():
+            for h in snap.get('top', []):
+                wallet_holdings[h.get('owner', '')] += h.get('usd', 0)
 
-    # ========================================
-    # 5. Action breakdown per day (activity heatmap)
-    # ========================================
-    print('Computing daily action breakdown...')
-    daily_actions = defaultdict(lambda: defaultdict(int))
-    for e in events:
-        action = e.get('action')
-        if not action: continue
-        bt = e.get('blockTime', 0)
-        date = datetime.fromtimestamp(bt, tz=timezone.utc).strftime('%Y-%m-%d')
-        daily_actions[date][action] += 1
-
-    action_types = ['buyYt', 'sellYt', 'buyPt', 'sellPt', 'addLiq', 'removeLiq', 'claimYield', 'redeemPt', 'strip']
-    daily_action_series = {a: [daily_actions.get(d, {}).get(a, 0) for d in all_dates] for a in action_types}
-
-    # ========================================
-    # 6. New vs returning users per week
-    # ========================================
-    print('Computing user retention...')
-    weekly_new = defaultdict(int)
-    weekly_returning = defaultdict(int)
-    seen_wallets = set()
-
-    for e in events:
-        action = e.get('action')
-        if not action: continue
-        signer = e.get('signer', '')
-        bt = e.get('blockTime', 0)
-        date = datetime.fromtimestamp(bt, tz=timezone.utc)
-        week = date.strftime('%Y-W%W')
-
-        if signer not in seen_wallets:
-            weekly_new[week] += 1
-            seen_wallets.add(signer)
-        else:
-            weekly_returning[week] += 1
-
-    weeks = sorted(set(list(weekly_new.keys()) + list(weekly_returning.keys())))
-    retention = {
-        'weeks': weeks,
-        'new': [weekly_new.get(w, 0) for w in weeks],
-        'returning': [weekly_returning.get(w, 0) for w in weeks],
-    }
+    enriched_users = []
+    for w, up in user_profiles.items():
+        enriched_users.append({
+            'wallet': w,
+            'holdingUsd': round(wallet_holdings.get(w, 0), 2),
+            'claimUsd': round(up['claimUsd'], 2),
+            'txs': up['txs'],
+            'buyYt': up['buyYt'], 'sellYt': up['sellYt'],
+            'buyPt': up['buyPt'], 'sellPt': up['sellPt'],
+            'addLiq': up['addLiq'], 'removeLiq': up['removeLiq'],
+            'claimYield': up['claimYield'], 'redeemPt': up['redeemPt'],
+            'markets': len(up['markets']),
+            'type': 'protocol' if w in PROTOCOL_ADDRS else 'user',
+            'firstDate': datetime.fromtimestamp(up['first'], tz=timezone.utc).strftime('%Y-%m-%d') if up['first'] else None,
+            'lastDate': datetime.fromtimestamp(up['last'], tz=timezone.utc).strftime('%Y-%m-%d') if up['last'] else None,
+        })
+    enriched_users.sort(key=lambda x: -(x['holdingUsd'] + x['claimUsd'] + x['txs']))
 
     # ========================================
-    # 7. Market activity summary
+    # 5. Market activity columns
     # ========================================
-    print('Computing market activity summary...')
+    print('Computing market activity columns...')
     market_activity = {}
     for e in events:
         market = e.get('market')
         if not market: continue
         action = e.get('action', 'other')
         if market not in market_activity:
-            market_activity[market] = {'txs': 0, 'uniqueUsers': set(), 'actions': defaultdict(int), 'first': None, 'last': None}
+            market_activity[market] = {'txs': 0, 'users': set(), 'actions': defaultdict(int)}
         ma = market_activity[market]
         ma['txs'] += 1
-        ma['uniqueUsers'].add(e.get('signer', ''))
+        ma['users'].add(e.get('signer', ''))
         ma['actions'][action] += 1
-        bt = e.get('blockTime', 0)
-        if not ma['first'] or bt < ma['first']: ma['first'] = bt
-        if not ma['last'] or bt > ma['last']: ma['last'] = bt
 
-    market_summary = []
+    market_cols = {}
     for mk, ma in market_activity.items():
-        market_summary.append({
-            'market': mk,
-            'platform': normalize_platform(MARKET_PLATFORM.get(mk, '')),
+        market_cols[mk] = {
             'txs': ma['txs'],
-            'uniqueUsers': len(ma['uniqueUsers']),
-            'actions': dict(ma['actions']),
-            'firstDate': datetime.fromtimestamp(ma['first'], tz=timezone.utc).strftime('%Y-%m-%d') if ma['first'] else None,
-            'lastDate': datetime.fromtimestamp(ma['last'], tz=timezone.utc).strftime('%Y-%m-%d') if ma['last'] else None,
-        })
-    market_summary.sort(key=lambda x: -x['txs'])
-
-    # ========================================
-    # 8. Claim frequency analysis
-    # ========================================
-    print('Computing claim frequency...')
-    claim_frequency = {'daily': 0, 'weekly': 0, 'monthly': 0, 'rare': 0}
-    for signer, data in claims_by_user.items():
-        if data['count'] < 2:
-            claim_frequency['rare'] += 1
-            continue
-        span_days = (data['last'] - data['first']) / 86400 if data['last'] and data['first'] else 0
-        if span_days <= 0:
-            claim_frequency['rare'] += 1
-        elif data['count'] / span_days >= 0.5:
-            claim_frequency['daily'] += 1
-        elif data['count'] / span_days >= 0.1:
-            claim_frequency['weekly'] += 1
-        elif data['count'] / span_days >= 0.03:
-            claim_frequency['monthly'] += 1
-        else:
-            claim_frequency['rare'] += 1
+            'users': len(ma['users']),
+            'trades': sum(ma['actions'].get(a, 0) for a in ['buyYt', 'sellYt', 'buyPt', 'sellPt']),
+            'claims': ma['actions'].get('claimYield', 0),
+            'lpEvents': ma['actions'].get('addLiq', 0) + ma['actions'].get('removeLiq', 0),
+        }
 
     # ========================================
     # Build output
     # ========================================
     print('Building output...')
 
-    # Top claimers
-    top_claimers = sorted(
-        [{'wallet': w, 'claims': d['count'], 'markets': len(d['markets']),
-          'firstClaim': datetime.fromtimestamp(d['first'], tz=timezone.utc).strftime('%Y-%m-%d') if d['first'] else None,
-          'lastClaim': datetime.fromtimestamp(d['last'], tz=timezone.utc).strftime('%Y-%m-%d') if d['last'] else None,
-          } for w, d in claims_by_user.items()],
-        key=lambda x: -x['claims']
-    )[:50]
+    # Activity series by protocol
+    activity_protocol = {a: [daily_activity_protocol.get(d, {}).get(a, 0) for d in all_dates] for a in action_types}
+
+    # Activity by platform (consolidated)
+    activity_by_platform = {}
+    for platform in daily_activity_platform:
+        norm = normalize_platform(platform)
+        if norm not in activity_by_platform:
+            activity_by_platform[norm] = {a: [0] * len(all_dates) for a in action_types}
+        for i, d in enumerate(all_dates):
+            for a in action_types:
+                activity_by_platform[norm][a][i] += daily_activity_platform[platform].get(d, {}).get(a, 0)
+
+    # Claims series
+    claims_protocol = {
+        'count': [daily_claims_protocol.get(d, {}).get('count', 0) for d in all_dates],
+        'usd': [round(daily_claims_protocol.get(d, {}).get('usd', 0)) for d in all_dates],
+    }
+
+    claims_by_platform_out = {}
+    for platform in daily_claims_platform:
+        norm = normalize_platform(platform)
+        if norm not in claims_by_platform_out:
+            claims_by_platform_out[norm] = {'count': [0]*len(all_dates), 'usd': [0.0]*len(all_dates)}
+        for i, d in enumerate(all_dates):
+            claims_by_platform_out[norm]['count'][i] += daily_claims_platform[platform].get(d, {}).get('count', 0)
+            claims_by_platform_out[norm]['usd'][i] += daily_claims_platform[platform].get(d, {}).get('usd', 0)
+    for norm in claims_by_platform_out:
+        claims_by_platform_out[norm]['usd'] = [round(v) for v in claims_by_platform_out[norm]['usd']]
+
+    claims_by_market_out = {}
+    for market in daily_claims_market:
+        claims_by_market_out[market] = {
+            'count': [daily_claims_market[market].get(d, {}).get('count', 0) for d in all_dates],
+            'usd': [round(daily_claims_market[market].get(d, {}).get('usd', 0)) for d in all_dates],
+        }
 
     output = {
         'generatedAt': datetime.now(timezone.utc).isoformat(),
         'dates': all_dates,
 
-        # Holder growth
+        # For HistoricalChart: Activity metric
+        'activityProtocol': activity_protocol,
+        'activityByPlatform': activity_by_platform,
+
+        # For HistoricalChart: Claims metric
+        'claimsProtocol': claims_protocol,
+        'claimsByPlatform': claims_by_platform_out,
+        'claimsByMarket': claims_by_market_out,
+
+        # For Holders tab: growth + retention
         'holderGrowth': cumulative_holders,
-        'totalUniqueWallets': len(first_seen),
+        'retention': {
+            'weeks': weeks,
+            'new': [weekly_new.get(w, 0) for w in weeks],
+            'returning': [weekly_returning.get(w, 0) for w in weeks],
+        },
 
-        # Daily action breakdown
-        'dailyActions': daily_action_series,
+        # For Holders tab: enriched user leaderboard (top 100)
+        'enrichedUsers': enriched_users[:100],
 
-        # Daily claims
-        'dailyClaims': [daily_claims_protocol.get(d, 0) for d in all_dates],
+        # For MarketCards: activity columns per market
+        'marketActivity': market_cols,
 
-        # User retention
-        'retention': retention,
-
-        # Claim frequency distribution
-        'claimFrequency': claim_frequency,
-
-        # Top traders (top 100 by tx count)
-        'topTraders': top_traders,
-
-        # Top claimers (top 50)
-        'topClaimers': top_claimers,
-
-        # Market activity summary
-        'marketActivity': market_summary,
-
-        # Protocol stats
+        # Stats
         'stats': {
             'totalEvents': len(events),
             'totalWallets': len(first_seen),
             'totalClaims': sum(d['count'] for d in claims_by_user.values()),
+            'totalClaimUsd': round(sum(d['totalUsd'] for d in claims_by_user.values())),
             'totalClaimers': len(claims_by_user),
-            'avgClaimsPerUser': round(sum(d['count'] for d in claims_by_user.values()) / max(1, len(claims_by_user)), 1),
         },
     }
 
     json.dump(output, open(OUT, 'w'))
     size_mb = os.path.getsize(OUT) / 1e6
     print(f'\nWrote {OUT} ({size_mb:.1f} MB)')
-    print(f'  {len(all_dates)} days, {len(first_seen):,} unique wallets')
-    print(f'  {sum(d["count"] for d in claims_by_user.values()):,} claims by {len(claims_by_user):,} users')
-    print(f'  Top trader: {top_traders[0]["wallet"][:16]}... ({top_traders[0]["txs"]} txs)')
-    print(f'  Claim frequency: {claim_frequency}')
+    print(f'  {len(all_dates)} days, {len(first_seen):,} wallets')
+    print(f'  Claims: {output["stats"]["totalClaims"]:,} totaling ${output["stats"]["totalClaimUsd"]:,}')
+    print(f'  Enriched users: {len(enriched_users):,} (top 100 saved)')
 
 
 if __name__ == '__main__':

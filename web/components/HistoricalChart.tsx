@@ -20,7 +20,7 @@ type TvlHistory = {
   marketMeta?: Record<string, { status: string; platform?: string }>;
 };
 
-type Metric = 'tvl' | 'flow' | 'volume' | 'apy';
+type Metric = 'tvl' | 'flow' | 'volume' | 'activity' | 'claims' | 'apy';
 type ApyView = 'current' | 'history';
 type View = 'protocol' | 'platform' | 'market';
 type Range = '30d' | '90d' | '1y' | 'all';
@@ -52,6 +52,7 @@ function parseMaturity(key: string) {
 
 export function HistoricalChart() {
   const [data, setData] = useState<TvlHistory | null>(null);
+  const [analyticsData, setAnalyticsData] = useState<any>(null);
   const [metric, setMetric] = useState<Metric>('tvl');
   const [view, setView] = useState<View>('protocol');
   const [range, setRange] = useState<Range>('all');
@@ -61,6 +62,7 @@ export function HistoricalChart() {
 
   useEffect(() => {
     fetch('/tvl-history.json').then(r => r.json()).then(setData).catch(() => null);
+    fetch('/analytics.json').then(r => r.json()).then(setAnalyticsData).catch(() => null);
   }, []);
 
   const activeMarketKeys = useMemo(() => {
@@ -79,6 +81,77 @@ export function HistoricalChart() {
     const cutoff = rangeDays[range];
     const startIdx = Math.max(0, data.dates.length - cutoff);
     const dates = data.dates.slice(startIdx);
+
+    // Activity view — stacked bar of action types
+    if (metric === 'activity' && analyticsData) {
+      const actionTypes = ['buyYt', 'sellYt', 'buyPt', 'sellPt', 'addLiq', 'removeLiq', 'claimYield', 'redeemPt'];
+      const actionColors: Record<string, string> = {
+        buyYt: '#4ade80', sellYt: '#f87171', buyPt: '#38bdf8', sellPt: '#fb923c',
+        addLiq: '#a78bfa', removeLiq: '#f472b6', claimYield: '#facc15', redeemPt: '#818cf8',
+      };
+
+      if (view === 'protocol') {
+        const actData = analyticsData.activityProtocol || {};
+        const aDates = analyticsData.dates || [];
+        const aStartIdx = Math.max(0, aDates.length - cutoff);
+        const rows = aDates.slice(aStartIdx).map((d: string, i: number) => {
+          const row: Record<string, any> = { date: d };
+          actionTypes.forEach(a => { row[a] = (actData[a] || [])[aStartIdx + i] || 0; });
+          return row;
+        });
+        return { chartData: rows, series: actionTypes, seriesColors: actionColors };
+      }
+      // Platform view
+      const platData = analyticsData.activityByPlatform || {};
+      const aDates = analyticsData.dates || [];
+      const aStartIdx = Math.max(0, aDates.length - cutoff);
+      const platforms = Object.keys(platData).sort((a, b) => {
+        const aSum = Object.values(platData[a] as Record<string, number[]>).flat().reduce((s: number, v: number) => s + v, 0);
+        const bSum = Object.values(platData[b] as Record<string, number[]>).flat().reduce((s: number, v: number) => s + v, 0);
+        return bSum - aSum;
+      }).slice(0, 8);
+      const rows = aDates.slice(aStartIdx).map((d: string, i: number) => {
+        const row: Record<string, any> = { date: d };
+        platforms.forEach(p => {
+          row[p] = actionTypes.reduce((s, a) => s + ((platData[p]?.[a] || [])[aStartIdx + i] || 0), 0);
+        });
+        return row;
+      });
+      const colors: Record<string, string> = {};
+      platforms.forEach((p, i) => { colors[p] = COLORS[i % COLORS.length]; });
+      return { chartData: rows, series: platforms, seriesColors: colors };
+    }
+
+    // Claims view — daily claim count or USD
+    if (metric === 'claims' && analyticsData) {
+      const aDates = analyticsData.dates || [];
+      const aStartIdx = Math.max(0, aDates.length - cutoff);
+
+      if (view === 'protocol') {
+        const cp = analyticsData.claimsProtocol || { count: [], usd: [] };
+        const rows = aDates.slice(aStartIdx).map((d: string, i: number) => ({
+          date: d, 'Claim Count': cp.count[aStartIdx + i] || 0, 'Claim USD': cp.usd[aStartIdx + i] || 0,
+        }));
+        return { chartData: rows, series: ['Claim USD'], seriesColors: { 'Claim Count': '#facc15', 'Claim USD': '#facc15' } };
+      }
+      // Platform/Market
+      const source = view === 'platform' ? analyticsData.claimsByPlatform : analyticsData.claimsByMarket;
+      if (!source) return { chartData: [] as Record<string, any>[], series: [] as string[], seriesColors: {} as Record<string, string> };
+      const entries = Object.entries(source as Record<string, { usd: number[] }>)
+        .map(([k, v]) => ({ key: k, total: v.usd.reduce((s, x) => s + x, 0) }))
+        .filter(e => e.total > 0)
+        .sort((a, b) => b.total - a.total)
+        .slice(0, 8);
+      const keys = entries.map(e => e.key);
+      const colors: Record<string, string> = {};
+      keys.forEach((k, i) => { colors[k] = COLORS[i % COLORS.length]; });
+      const rows = aDates.slice(aStartIdx).map((d: string, i: number) => {
+        const row: Record<string, any> = { date: d };
+        keys.forEach(k => { row[k] = (source[k]?.usd || [])[aStartIdx + i] || 0; });
+        return row;
+      });
+      return { chartData: rows, series: keys, seriesColors: colors };
+    }
 
     // APY view
     if (metric === 'apy') {
@@ -256,6 +329,7 @@ export function HistoricalChart() {
 
   const fmtAxis = (v: number) => {
     if (metric === 'apy') return `${v.toFixed(0)}%`;
+    if (metric === 'activity') return `${v >= 1000 ? `${(v/1000).toFixed(0)}K` : v}`;
     const abs = Math.abs(v);
     if (abs >= 1e6) return `$${(v / 1e6).toFixed(0)}M`;
     if (abs >= 1e3) return `$${(v / 1e3).toFixed(0)}K`;
@@ -275,12 +349,12 @@ export function HistoricalChart() {
       <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1">
-            {(['tvl', 'flow', 'volume'] as Metric[]).map(m => (
+            {(['tvl', 'flow', 'volume', 'activity', 'claims', 'apy'] as Metric[]).map(m => (
               <button key={m} onClick={() => { setMetric(m); setHidden(new Set()); }}
                 className={`text-xs px-3 py-1.5 rounded-lg border transition ${
                   metric === m ? 'border-white/30 bg-white/10 text-white' : 'border-white/10 text-white/40 hover:text-white'
                 }`}>
-                {m === 'tvl' ? 'TVL' : m === 'flow' ? 'Inflow / Outflow' : 'Volume'}
+                {m === 'tvl' ? 'TVL' : m === 'flow' ? 'Inflow / Outflow' : m === 'volume' ? 'Volume' : m === 'activity' ? 'Activity' : m === 'claims' ? 'Claims' : 'APY'}
               </button>
             ))}
           </div>
@@ -295,7 +369,7 @@ export function HistoricalChart() {
                 </button>
               ))}
             </div>
-          ) : (
+          ) : metric === 'activity' && view === 'protocol' ? null : (
             <div className="flex items-center gap-1">
               {(['protocol', 'platform', 'market'] as View[]).map(v => (
                 <button key={v} onClick={() => { setView(v); setHidden(new Set()); }}
@@ -490,6 +564,12 @@ export function HistoricalChart() {
               {metric === 'volume' && view !== 'protocol' && (
                 series.map((k) => (
                   <Bar key={k} dataKey={k} stackId="1" fill={seriesColors[k]} fillOpacity={0.7} />
+                ))
+              )}
+            {/* Activity + Claims bars */}
+              {(metric === 'activity' || metric === 'claims') && (
+                series.map((k) => (
+                  <Bar key={k} dataKey={k} stackId="1" fill={seriesColors[k]} fillOpacity={0.8} />
                 ))
               )}
             </BarChart>

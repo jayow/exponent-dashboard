@@ -46,6 +46,7 @@ export function MarketCards() {
   const router = useRouter();
   const [data, setData] = useState<LiveData | null>(null);
   const [histData, setHistData] = useState<TvlHistory | null>(null);
+  const [activityData, setActivityData] = useState<any>(null);
   const [sortKey, setSortKey] = useState<SortKey>('tvl');
   const [asc, setAsc] = useState(false);
   const [activeOnly, setActiveOnly] = useState(true);
@@ -53,6 +54,7 @@ export function MarketCards() {
   useEffect(() => {
     fetch('/markets-live.json').then(r => r.json()).then(setData).catch(() => null);
     fetch('/tvl-history.json').then(r => r.json()).then(setHistData).catch(() => null);
+    fetch('/analytics.json').then(r => r.json()).then(setActivityData).catch(() => null);
   }, []);
 
   const allMarkets = useMemo(() => {
@@ -173,6 +175,9 @@ export function MarketCards() {
                 <th className="th-sortable cell text-right" onClick={() => onSort('leverage')}>Leverage{arrow('leverage')}</th>
               </>}
               <th className="th-sortable cell text-right" onClick={() => onSort('maturity')}>Maturity{arrow('maturity')}</th>
+              <th className="cell text-right">Txns</th>
+              <th className="cell text-right">Users</th>
+              <th className="cell text-right">Claims</th>
               {activeOnly && <th className="cell text-left">Emissions</th>}
             </tr>
           </thead>
@@ -215,6 +220,19 @@ export function MarketCards() {
                     <span>{m.maturity}</span>
                     <span className="text-white/30 ml-1">({m.daysLeft}d)</span>
                   </td>
+                  {(() => {
+                    const d = new Date(m.maturity + 'T00:00:00Z');
+                    const dd = String(d.getUTCDate()).padStart(2, '0');
+                    const mmm = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.getUTCMonth()];
+                    const yy = String(d.getUTCFullYear()).slice(-2);
+                    const mkey = `${m.ticker}-${dd}${mmm}${yy}`;
+                    const ma = activityData?.marketActivity?.[mkey];
+                    return <>
+                      <td className="cell text-right tabular-nums text-white/40">{ma?.txs?.toLocaleString() || '–'}</td>
+                      <td className="cell text-right tabular-nums text-white/40">{ma?.users?.toLocaleString() || '–'}</td>
+                      <td className="cell text-right tabular-nums text-yellow-400/50">{ma?.claims?.toLocaleString() || '–'}</td>
+                    </>;
+                  })()}
                   {activeOnly && <td className="cell text-white/40 text-xs truncate max-w-[120px]">{m.pointsName || '—'}</td>}
                 </tr>
               );
