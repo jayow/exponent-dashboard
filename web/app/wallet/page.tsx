@@ -3,13 +3,15 @@ import { Suspense, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 
+type TokenChange = { symbol: string; delta: number; usd: number };
 type WalletEvent = {
   sig: string;
   blockTime: number;
   market: string;
   action: string;
   instr: string;
-  tokenChanges?: Record<string, number>;
+  changes?: TokenChange[];
+  usd?: number;
 };
 
 type Filter = 'buyYt' | 'sellYt' | 'claimYield' | 'addLiq' | 'removeLiq' | 'strip' | 'redeemPt' | 'buyPt' | 'sellPt';
@@ -111,13 +113,14 @@ function WalletView() {
               <th className="th-sortable cell text-left" onClick={() => onSort('market')}>Market{arrow('market')}</th>
               <th className="th-sortable cell text-left" onClick={() => onSort('action')}>Action{arrow('action')}</th>
               <th className="cell text-left">Instruction</th>
+              <th className="cell text-right">USD</th>
               <th className="cell text-left">Token Changes</th>
               <th className="cell">Tx</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-eclipse-700/40 text-[13px]">
-            {events === null && <tr><td className="cell text-white/30" colSpan={6}>Loading…</td></tr>}
-            {visible.length === 0 && events !== null && <tr><td className="cell text-white/30" colSpan={6}>No events found.</td></tr>}
+            {events === null && <tr><td className="cell text-white/30" colSpan={7}>Loading…</td></tr>}
+            {visible.length === 0 && events !== null && <tr><td className="cell text-white/30" colSpan={7}>No events found.</td></tr>}
             {visible.map((e, i) => (
               <tr key={`${e.sig}-${i}`} className="hover:bg-eclipse-800/40">
                 <td className="cell text-white/50 font-mono text-xs whitespace-nowrap">
@@ -126,12 +129,15 @@ function WalletView() {
                 <td className="cell text-white/70">{e.market || '–'}</td>
                 <td className="cell"><span className={COLOR[e.action] || 'text-white/50'}>{e.action}</span></td>
                 <td className="cell text-white/40 text-xs">{e.instr || '–'}</td>
+                <td className="cell text-right tabular-nums text-white/60">
+                  {e.usd ? `$${e.usd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '–'}
+                </td>
                 <td className="cell text-xs tabular-nums">
-                  {e.tokenChanges ? (
+                  {e.changes?.length ? (
                     <div className="flex flex-col gap-0.5">
-                      {Object.entries(e.tokenChanges).map(([mint, delta]) => (
-                        <span key={mint} className={delta > 0 ? 'text-emerald-400/70' : 'text-rose-400/70'}>
-                          {delta > 0 ? '+' : ''}{delta.toFixed(4)} <span className="text-white/20">{mint.slice(0, 6)}…</span>
+                      {e.changes.map((c, j) => (
+                        <span key={j} className={c.delta > 0 ? 'text-emerald-400/70' : 'text-rose-400/70'}>
+                          {c.delta > 0 ? '+' : ''}{c.delta.toFixed(4)} <span className="text-white/40">{c.symbol}</span>
                         </span>
                       ))}
                     </div>
