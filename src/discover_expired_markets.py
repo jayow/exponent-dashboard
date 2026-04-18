@@ -211,7 +211,43 @@ def main():
         e['underlyingMint'] = ''
         e['ptMint'] = ''
         e['ytMint'] = ''
-        e['platform'] = info.get('platform', '')
+        raw_platform = info.get('platform', '')
+        if not raw_platform:
+            # Derive platform from token symbol
+            sym_lower = symbol.lower()
+            if sym_lower in ('musdc', 'musdt'):
+                raw_platform = 'marginfi'
+            elif sym_lower in ('kusdc',):
+                raw_platform = 'Kamino'
+            elif sym_lower in ('jlp',):
+                raw_platform = 'Jupiter'
+            elif sym_lower in ('kysol',):
+                raw_platform = 'Kyros'
+            elif sym_lower in ('inf',):
+                raw_platform = 'Sanctum'
+            elif sym_lower in ('crt',):
+                raw_platform = 'Carrot'
+            elif sym_lower in ('dsol',):
+                raw_platform = 'Drift'
+            elif sym_lower in ('dzsol',):
+                raw_platform = 'DriftZone'
+            elif sym_lower in ('dfdvsol',):
+                raw_platform = 'Drift Vaults'
+            elif sym_lower in ('jlsol', 'jlusdg'):
+                raw_platform = 'Jupiter Lend'
+            elif sym_lower in ('mlp', 'mlp-usdc'):
+                raw_platform = 'Meteora'
+            elif sym_lower in ('alp',):
+                raw_platform = 'Adrena'
+            elif sym_lower in ('shyusd',):
+                raw_platform = 'Hylo USD'
+            elif sym_lower.startswith('usd') or sym_lower in ('susde', 'usde', 'syrupusdc', 'usdc+'):
+                raw_platform = 'Stablecoins'
+            elif sym_lower in ('store',):
+                raw_platform = 'ORE'
+            else:
+                raw_platform = symbol
+        e['platform'] = raw_platform
         e['syExchangeRate'] = 1
         e['interfaceType'] = ''
         del e['_dedup']

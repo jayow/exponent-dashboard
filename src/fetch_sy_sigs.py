@@ -31,10 +31,36 @@ def fetch_sigs_for_mint(mint):
     if os.path.exists(cursor_path):
         cursor = json.load(open(cursor_path)).get('before')
 
-    # Skip if already completed (has data, no cursor)
+    # If already completed (has data, no cursor), fetch only new sigs from the top
     if existing and not cursor:
-        print(f'  {short}... already complete ({len(existing)} sigs), skipping')
-        return len(existing)
+        seen = set(s['sig'] for s in existing)
+        new_sigs = []
+        scan_cursor = None
+        print(f'  {short}... checking for new sigs (have {len(existing)})...', end='', flush=True)
+        while True:
+            params = [mint, {'limit': LIMIT}]
+            if scan_cursor:
+                params[1]['before'] = scan_cursor
+            result = rpc('getSignaturesForAddress', params)
+            if not result:
+                break
+            found_overlap = False
+            for entry in result:
+                if entry['signature'] in seen:
+                    found_overlap = True
+                    break
+                new_sigs.append({'sig': entry['signature'], 'blockTime': entry.get('blockTime')})
+            scan_cursor = result[-1]['signature']
+            if found_overlap or len(result) < LIMIT:
+                break
+        if new_sigs:
+            all_sigs = list(existing) + new_sigs
+            all_sigs.sort(key=lambda s: s.get('blockTime') or 0)
+            json.dump(all_sigs, open(out_path, 'w'))
+            print(f' +{len(new_sigs)} new ({len(all_sigs)} total)')
+        else:
+            print(f' up to date')
+        return len(all_sigs) if new_sigs else len(existing)
 
     print(f'  {short}... ({len(existing)} existing sigs, cursor={cursor[:16] + "..." if cursor else "none"})')
 

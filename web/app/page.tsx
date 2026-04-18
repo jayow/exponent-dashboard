@@ -1,4 +1,5 @@
 import { TvlOverview } from '@/components/TvlOverview';
+import { TvlChart } from '@/components/TvlChart';
 import { MarketCards } from '@/components/MarketCards';
 
 export default function HomePage() {
@@ -17,6 +18,9 @@ export default function HomePage() {
 
       {/* Protocol overview — TVL headline + platform breakdown charts */}
       <TvlOverview />
+
+      {/* Historical TVL chart — protocol / by platform / by market */}
+      <TvlChart />
 
       {/* Per-market table — click to drill into on-chain activity */}
       <MarketCards />

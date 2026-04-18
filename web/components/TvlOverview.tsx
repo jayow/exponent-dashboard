@@ -46,6 +46,11 @@ export function TvlOverview() {
     // Consolidate related platforms
     const normalize = (platform: string, ticker: string): string => {
       if (/^Hylo/i.test(platform)) return 'Hylo';
+      if (/^Jito Restaking/i.test(platform)) return 'Fragmetric';
+      if (/^Jito/i.test(platform)) return 'Jito';
+      if (/^Drift/i.test(platform)) return 'Drift';
+      if (/^Jupiter/i.test(platform)) return 'Jupiter';
+      if (/^BULK/i.test(platform)) return 'BULK';
       if (/^frag/i.test(ticker)) return 'Fragmetric';
       return platform;
     };

@@ -221,12 +221,31 @@ def main():
     # Filter out markets with no TVL ever
     by_market = {k: v for k, v in by_market.items() if max(v) > 0}
 
+    # Build market metadata for the frontend
+    market_meta = {}
+    for m in markets:
+        key = m['key']
+        if key not in by_market:
+            continue
+        tvl_arr = by_market[key]
+        peak_tvl = max(tvl_arr)
+        peak_date = all_dates[tvl_arr.index(peak_tvl)] if peak_tvl > 0 else None
+        market_meta[key] = {
+            'platform': m.get('platform', ''),
+            'ticker': m.get('underlyingTicker', key.split('-')[0]),
+            'maturityDate': m.get('maturityDate', ''),
+            'status': m.get('status', 'expired'),
+            'peakTvl': round(peak_tvl),
+            'peakDate': peak_date,
+        }
+
     output = {
         'generatedAt': datetime.now(timezone.utc).isoformat(),
         'dates': all_dates,
         'protocol': protocol_tvl,
         'byMarket': by_market,
         'byPlatform': dict(by_platform),
+        'marketMeta': market_meta,
     }
 
     json.dump(output, open(OUT, 'w'))
