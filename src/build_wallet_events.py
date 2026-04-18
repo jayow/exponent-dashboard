@@ -83,13 +83,32 @@ if os.path.exists(api_path):
             if m.get(f): ALL_MINT_TO_MARKET[m[f]] = key
 
 
+# Build symbol→market mapping for underlying token resolution
+SYMBOL_TO_MARKET = {}
+if os.path.exists(markets_path):
+    for m in json.load(open(markets_path)):
+        ticker = m.get('underlyingTicker', '')
+        if ticker and ticker not in SYMBOL_TO_MARKET:
+            SYMBOL_TO_MARKET[ticker] = m['key']
+
+
 def resolve_market(event):
     """Try to identify market from token changes if not already set."""
     if event.get('market'):
         return event['market']
+    # Try SY/PT/YT mint mapping
     for mint in event.get('tokenChanges', {}):
         if mint in ALL_MINT_TO_MARKET:
             return ALL_MINT_TO_MARKET[mint]
+    # Try underlying token symbol mapping
+    for mint in event.get('tokenChanges', {}):
+        symbol = MINT_SYMBOLS.get(mint, '')
+        if symbol in SYMBOL_TO_MARKET:
+            return SYMBOL_TO_MARKET[symbol]
+        # Handle symbol variants (legacyUSD* → USD*)
+        for prefix in ('legacy', 'w', 'e'):
+            if symbol.startswith(prefix) and symbol[len(prefix):] in SYMBOL_TO_MARKET:
+                return SYMBOL_TO_MARKET[symbol[len(prefix):]]
     return ''
 
 
