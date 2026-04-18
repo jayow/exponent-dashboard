@@ -2,22 +2,37 @@
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import type { TradeEvent } from '@/lib/types';
 
-type Filter = 'buyYt' | 'sellYt' | 'claimYield' | 'addLiq' | 'removeLiq' | 'strip' | 'redeemPt';
-const ALL_FILTERS: Filter[] = ['buyYt', 'sellYt', 'claimYield', 'addLiq', 'removeLiq', 'strip', 'redeemPt'];
-const LABEL: Record<Filter, string> = { buyYt:'YT buy', sellYt:'YT sell', claimYield:'Claim', addLiq:'LP add', removeLiq:'LP remove', strip:'Strip', redeemPt:'Redeem' };
-const COLOR: Record<string, string> = { buyYt:'text-emerald-400', sellYt:'text-rose-400', claimYield:'text-solar-400', addLiq:'text-flare-400', removeLiq:'text-flare-400/70', strip:'text-eclipse-100/70', redeemPt:'text-eclipse-100/70', other:'text-eclipse-100/50' };
+type WalletEvent = {
+  sig: string;
+  blockTime: number;
+  market: string;
+  action: string;
+  instr: string;
+  tokenChanges?: Record<string, number>;
+};
 
-type SortKey = 'date' | 'market' | 'action' | 'usd' | 'underlying';
+type Filter = 'buyYt' | 'sellYt' | 'claimYield' | 'addLiq' | 'removeLiq' | 'strip' | 'redeemPt' | 'buyPt' | 'sellPt';
+const ALL_FILTERS: Filter[] = ['buyYt', 'sellYt', 'buyPt', 'sellPt', 'claimYield', 'addLiq', 'removeLiq', 'strip', 'redeemPt'];
+const LABEL: Record<Filter, string> = {
+  buyYt:'Buy YT', sellYt:'Sell YT', buyPt:'Buy PT', sellPt:'Sell PT',
+  claimYield:'Claim', addLiq:'Add LP', removeLiq:'Remove LP', strip:'Strip', redeemPt:'Redeem',
+};
+const COLOR: Record<string, string> = {
+  buyYt:'text-emerald-400', sellYt:'text-rose-400', buyPt:'text-sky-400', sellPt:'text-orange-400',
+  claimYield:'text-yellow-400', addLiq:'text-purple-400', removeLiq:'text-purple-400/70',
+  strip:'text-white/50', redeemPt:'text-white/50',
+};
+
+type SortKey = 'date' | 'market' | 'action';
 
 function WalletView() {
   const params = useSearchParams();
   const addr = params.get('addr') || '';
-  const [events, setEvents] = useState<TradeEvent[] | null>(null);
+  const [events, setEvents] = useState<WalletEvent[] | null>(null);
   const [enabled, setEnabled] = useState<Set<Filter>>(new Set(ALL_FILTERS));
   const [sortKey, setSortKey] = useState<SortKey>('date');
-  const [asc, setAsc] = useState(true);
+  const [asc, setAsc] = useState(false);
 
   useEffect(() => {
     if (!addr) { setEvents([]); return; }
@@ -27,24 +42,21 @@ function WalletView() {
       .then(setEvents).catch(() => setEvents([]));
   }, [addr]);
 
-  const totals = useMemo(() => {
-    const t = { buyYt: 0, sellYt: 0, claimYield: 0, addLiq: 0, removeLiq: 0 };
+  const actionCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
     for (const e of events || []) {
-      const v = Math.abs(e.usdNet || 0);
-      if (e.action in t) (t as any)[e.action] += v;
+      if (e.action) counts[e.action] = (counts[e.action] || 0) + 1;
     }
-    return t;
+    return counts;
   }, [events]);
 
   const visible = useMemo(() => {
-    let arr = (events || []).filter(e => enabled.has(e.action as Filter));
+    let arr = (events || []).filter(e => e.action && enabled.has(e.action as Filter));
     arr.sort((a, b) => {
       let c = 0;
       if (sortKey === 'date') c = (a.blockTime || 0) - (b.blockTime || 0);
-      else if (sortKey === 'market') c = a.market.localeCompare(b.market);
-      else if (sortKey === 'action') c = a.action.localeCompare(b.action);
-      else if (sortKey === 'usd') c = Math.abs(a.usdNet) - Math.abs(b.usdNet);
-      else if (sortKey === 'underlying') c = a.underlyingDelta - b.underlyingDelta;
+      else if (sortKey === 'market') c = (a.market || '').localeCompare(b.market || '');
+      else if (sortKey === 'action') c = (a.action || '').localeCompare(b.action || '');
       return c * (asc ? 1 : -1);
     });
     return arr;
@@ -55,75 +67,101 @@ function WalletView() {
   function toggle(f: Filter) { setEnabled(prev => { const n = new Set(prev); if (n.has(f)) n.delete(f); else n.add(f); return n; }); }
   const allOn = enabled.size === ALL_FILTERS.length;
 
+  const totalEvents = (events || []).filter(e => e.action).length;
+  const markets = new Set((events || []).map(e => e.market).filter(Boolean));
+
   return (
-    <main className="mx-auto max-w-[1200px] px-4 sm:px-6 py-10">
-      <Link href="/" className="text-solar-300 hover:text-white text-sm">← all wallets</Link>
-      <h1 className="mt-4 text-2xl font-semibold text-white">Wallet activity</h1>
-      <p className="font-mono text-xs text-eclipse-100/50 break-all mt-1 flex items-center gap-3 flex-wrap">
+    <main className="mx-auto max-w-[1400px] px-4 sm:px-6 py-10">
+      <Link href="/" className="text-white/40 hover:text-white text-sm">← back</Link>
+      <h1 className="mt-4 text-2xl font-semibold text-white">Wallet Activity</h1>
+      <p className="font-mono text-xs text-white/50 break-all mt-1 flex items-center gap-3 flex-wrap">
         <span>{addr}</span>
-        {addr && <a href={`https://solscan.io/account/${addr}`} target="_blank" rel="noopener noreferrer" className="text-solar-300 hover:text-white">solscan ↗</a>}
+        {addr && <a href={`https://solscan.io/account/${addr}`} target="_blank" rel="noopener noreferrer" className="text-white/40 hover:text-white">solscan ↗</a>}
       </p>
-      <div className="mt-6 grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
-        <Stat label="YT buys" value={`$${Math.round(totals.buyYt).toLocaleString()}`} />
-        <Stat label="YT sells" value={`$${Math.round(totals.sellYt).toLocaleString()}`} />
-        <Stat label="Claims" value={`$${Math.round(totals.claimYield).toLocaleString()}`} />
-        <Stat label="LP deposits" value={`$${Math.round(totals.addLiq).toLocaleString()}`} />
-        <Stat label="LP withdrawals" value={`$${Math.round(totals.removeLiq).toLocaleString()}`} />
+
+      {/* Summary stats */}
+      <div className="mt-6 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 text-sm">
+        <Stat label="Total Txns" value={`${totalEvents}`} />
+        <Stat label="Markets" value={`${markets.size}`} />
+        {ALL_FILTERS.map(f => actionCounts[f] ? (
+          <Stat key={f} label={LABEL[f]} value={`${actionCounts[f]}`} />
+        ) : null)}
       </div>
+
+      {/* Filter chips */}
       <div className="mt-6 flex flex-wrap items-center gap-2">
         <button onClick={() => setEnabled(new Set(allOn ? [] : ALL_FILTERS))}
-          className={`text-xs px-3 py-1.5 rounded-full border transition ${allOn ? 'border-solar-400 bg-solar-500/10 text-white' : 'border-eclipse-700/60 bg-eclipse-900/40 text-eclipse-100/70'}`}>
-          {allOn ? 'All ✓' : `${enabled.size} selected`}
+          className={`text-xs px-3 py-1.5 rounded-lg border transition ${allOn ? 'border-white/30 bg-white/10 text-white' : 'border-white/10 text-white/40'}`}>
+          {allOn ? 'All' : `${enabled.size} selected`}
         </button>
         {ALL_FILTERS.map(f => (
           <button key={f} onClick={() => toggle(f)}
-            className={`text-xs px-3 py-1.5 rounded-full border transition ${enabled.has(f) ? 'border-solar-400 bg-solar-500/10 text-white' : 'border-eclipse-700/60 bg-eclipse-900/40 text-eclipse-100/50'}`}>
-            {LABEL[f]}
+            className={`text-xs px-3 py-1.5 rounded-lg border transition ${enabled.has(f) ? 'border-white/30 bg-white/10 text-white' : 'border-white/10 text-white/40'}`}>
+            {LABEL[f]} {actionCounts[f] ? `(${actionCounts[f]})` : ''}
           </button>
         ))}
       </div>
+
+      {/* Events table */}
       <section className="mt-4 rounded-2xl border border-eclipse-700/60 bg-eclipse-900/40 backdrop-blur overflow-x-auto">
         <table className="w-full text-sm">
-          <thead className="text-xs uppercase tracking-wider text-eclipse-100/50 bg-eclipse-900/60">
+          <thead className="text-xs uppercase tracking-wider text-white/40 bg-eclipse-900/60">
             <tr>
-              <th className="th-sortable cell text-left" onClick={() => onSort('date')}>date{arrow('date')}</th>
-              <th className="th-sortable cell text-left" onClick={() => onSort('market')}>market{arrow('market')}</th>
-              <th className="th-sortable cell text-left" onClick={() => onSort('action')}>action{arrow('action')}</th>
-              <th className="cell text-left">instruction</th>
-              <th className="th-sortable cell text-right" onClick={() => onSort('usd')}>USD{arrow('usd')}</th>
-              <th className="th-sortable cell text-right" onClick={() => onSort('underlying')}>underlying Δ{arrow('underlying')}</th>
-              <th className="cell text-left">tx</th>
+              <th className="th-sortable cell text-left" onClick={() => onSort('date')}>Date{arrow('date')}</th>
+              <th className="th-sortable cell text-left" onClick={() => onSort('market')}>Market{arrow('market')}</th>
+              <th className="th-sortable cell text-left" onClick={() => onSort('action')}>Action{arrow('action')}</th>
+              <th className="cell text-left">Instruction</th>
+              <th className="cell text-left">Token Changes</th>
+              <th className="cell">Tx</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-eclipse-700/40 text-[13px]">
-            {events === null && <tr><td className="cell text-eclipse-100/50" colSpan={7}>Loading…</td></tr>}
-            {visible.length === 0 && events !== null && <tr><td className="cell text-eclipse-100/40" colSpan={7}>No events.</td></tr>}
-            {visible.map(e => (
-              <tr key={e.sig + e.market} className="hover:bg-eclipse-800/40">
-                <td className="cell text-eclipse-100/70 font-mono text-xs">{new Date(e.blockTime * 1000).toISOString().replace('T', ' ').slice(0, 19)}</td>
-                <td className="cell">{e.market}</td>
-                <td className="cell"><span className={COLOR[e.action] || COLOR.other}>{e.action}</span></td>
-                <td className="cell text-eclipse-100/60 text-xs">{e.instr || '—'}</td>
-                <td className="cell text-right tabular-nums">${Math.abs(e.usdNet || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                <td className="cell text-right tabular-nums text-eclipse-100/70">{e.underlyingDelta.toFixed(4)}</td>
-                <td className="cell"><a href={`https://solscan.io/tx/${e.sig}`} target="_blank" rel="noopener noreferrer" className="text-solar-300 hover:text-white">↗</a></td>
+            {events === null && <tr><td className="cell text-white/30" colSpan={6}>Loading…</td></tr>}
+            {visible.length === 0 && events !== null && <tr><td className="cell text-white/30" colSpan={6}>No events found.</td></tr>}
+            {visible.map((e, i) => (
+              <tr key={`${e.sig}-${i}`} className="hover:bg-eclipse-800/40">
+                <td className="cell text-white/50 font-mono text-xs whitespace-nowrap">
+                  {new Date(e.blockTime * 1000).toISOString().replace('T', ' ').slice(0, 19)}
+                </td>
+                <td className="cell text-white/70">{e.market || '–'}</td>
+                <td className="cell"><span className={COLOR[e.action] || 'text-white/50'}>{e.action}</span></td>
+                <td className="cell text-white/40 text-xs">{e.instr || '–'}</td>
+                <td className="cell text-xs tabular-nums">
+                  {e.tokenChanges ? (
+                    <div className="flex flex-col gap-0.5">
+                      {Object.entries(e.tokenChanges).map(([mint, delta]) => (
+                        <span key={mint} className={delta > 0 ? 'text-emerald-400/70' : 'text-rose-400/70'}>
+                          {delta > 0 ? '+' : ''}{delta.toFixed(4)} <span className="text-white/20">{mint.slice(0, 6)}…</span>
+                        </span>
+                      ))}
+                    </div>
+                  ) : '–'}
+                </td>
+                <td className="cell">
+                  <a href={`https://solscan.io/tx/${e.sig}`} target="_blank" rel="noopener noreferrer" className="text-white/30 hover:text-white">↗</a>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </section>
+      {visible.length > 0 && (
+        <div className="text-xs text-white/30 mt-2 text-center">
+          Showing {visible.length} of {totalEvents} events
+        </div>
+      )}
     </main>
   );
 }
 
 export default function WalletPage() {
-  return <Suspense fallback={<div className="mx-auto max-w-[1200px] px-4 py-10 text-eclipse-100/50">Loading…</div>}><WalletView /></Suspense>;
+  return <Suspense fallback={<div className="mx-auto max-w-[1400px] px-4 py-10 text-white/50">Loading…</div>}><WalletView /></Suspense>;
 }
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-eclipse-700/60 bg-eclipse-900/60 backdrop-blur px-3 py-2">
-      <div className="text-[10px] uppercase tracking-wider text-solar-400">{label}</div>
+    <div className="rounded-xl border border-eclipse-700/60 bg-eclipse-900/50 px-3 py-2">
+      <div className="text-[10px] uppercase tracking-wider text-white/40">{label}</div>
       <div className="mt-0.5 text-base font-semibold text-white tabular-nums">{value}</div>
     </div>
   );
