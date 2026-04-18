@@ -158,10 +158,16 @@ def main():
             timeout=60
         )
 
+        results['analytics'] = run(
+            'python3 src/build_analytics.py',
+            'Step 10: Build activity analytics',
+            timeout=120
+        )
+
     if not hist_only:
         results['web_data'] = run(
             'python3 src/build_web_data.py',
-            'Step 10: Build wallet activity data',
+            'Step 11: Build wallet activity data',
             timeout=300
         )
 
