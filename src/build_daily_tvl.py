@@ -239,6 +239,86 @@ def main():
             'peakDate': peak_date,
         }
 
+    # Build daily inflow/outflow/volume from raw events — protocol, platform, and market level
+    print('Computing daily flows...')
+    daily_inflow = defaultdict(float)
+    daily_outflow = defaultdict(float)
+    platform_inflow = defaultdict(lambda: defaultdict(float))
+    platform_outflow = defaultdict(lambda: defaultdict(float))
+    market_inflow = defaultdict(lambda: defaultdict(float))
+    market_outflow = defaultdict(lambda: defaultdict(float))
+    total_volume_all_time = 0
+
+    for sy, mkts in sy_to_markets.items():
+        short = sy[:16]
+        decimals = mkts[0].get('underlyingDecimals', 6)
+        pk = price_key(mkts[0])
+        platform = mkts[0].get('platform', 'Unknown')
+        events = load_events(short)
+        correction = corrections.get(sy, 1.0)
+        shared = len(mkts)
+        for ev in events:
+            bt = ev.get('blockTime')
+            if not bt:
+                continue
+            date = datetime.fromtimestamp(bt, tz=timezone.utc).strftime('%Y-%m-%d')
+            price = prices.get(pk, {}).get(date)
+            if not price:
+                continue
+            mint_usd = (ev.get('mintDelta', 0) / (10 ** decimals)) * correction * price
+            burn_usd = (ev.get('burnDelta', 0) / (10 ** decimals)) * correction * price
+            daily_inflow[date] += mint_usd
+            daily_outflow[date] += burn_usd
+            total_volume_all_time += mint_usd + burn_usd
+            platform_inflow[platform][date] += mint_usd
+            platform_outflow[platform][date] += burn_usd
+            # Attribute to active markets sharing this SY on this date
+            active_mkts = [m for m in mkts if date < m.get('maturityDate', '9999-12-31')]
+            per_market = 1 / max(1, len(active_mkts))
+            for am in active_mkts:
+                market_inflow[am['key']][date] += mint_usd * per_market
+                market_outflow[am['key']][date] += burn_usd * per_market
+
+    inflow_series = [round(daily_inflow.get(d, 0)) for d in all_dates]
+    outflow_series = [round(daily_outflow.get(d, 0)) for d in all_dates]
+    net_flow_series = [round(daily_inflow.get(d, 0) - daily_outflow.get(d, 0)) for d in all_dates]
+    volume_series = [round(daily_inflow.get(d, 0) + daily_outflow.get(d, 0)) for d in all_dates]
+
+    # Per-platform flows
+    flow_by_platform = {}
+    for p in platform_inflow:
+        flow_by_platform[p] = {
+            'inflow': [round(platform_inflow[p].get(d, 0)) for d in all_dates],
+            'outflow': [round(platform_outflow[p].get(d, 0)) for d in all_dates],
+        }
+
+    # Per-market flows
+    flow_by_market = {}
+    for mk in market_inflow:
+        flow_by_market[mk] = {
+            'inflow': [round(market_inflow[mk].get(d, 0)) for d in all_dates],
+            'outflow': [round(market_outflow[mk].get(d, 0)) for d in all_dates],
+        }
+
+    # Protocol stats
+    active_markets = sum(1 for m in markets if m.get('status') == 'active')
+    expired_markets = sum(1 for m in markets if m.get('status') == 'expired')
+    unique_platforms = len(set(m.get('platform', '') for m in markets if m.get('platform')))
+    peak = max(protocol_tvl)
+    peak_date = all_dates[protocol_tvl.index(peak)]
+    first_date = next((d for d, v in zip(all_dates, protocol_tvl) if v > 0), all_dates[0])
+
+    # Count unique holders
+    holders_path = os.path.join(ROOT, 'web', 'public', 'holders.json')
+    unique_holders = 0
+    if os.path.exists(holders_path):
+        holders_data = json.load(open(holders_path))
+        all_wallets = set()
+        for snap in holders_data.values():
+            for h in snap.get('top', []):
+                all_wallets.add(h.get('owner', ''))
+        unique_holders = len(all_wallets)
+
     output = {
         'generatedAt': datetime.now(timezone.utc).isoformat(),
         'dates': all_dates,
@@ -246,6 +326,25 @@ def main():
         'byMarket': by_market,
         'byPlatform': dict(by_platform),
         'marketMeta': market_meta,
+        'inflow': inflow_series,
+        'outflow': outflow_series,
+        'netFlow': net_flow_series,
+        'volume': volume_series,
+        'flowByPlatform': flow_by_platform,
+        'flowByMarket': flow_by_market,
+        'stats': {
+            'activeMarkets': active_markets,
+            'expiredMarkets': expired_markets,
+            'totalMarkets': active_markets + expired_markets,
+            'platforms': unique_platforms,
+            'peakTvl': round(peak),
+            'peakDate': peak_date,
+            'currentTvl': protocol_tvl[-1],
+            'totalVolume': round(total_volume_all_time),
+            'uniqueHolders': unique_holders,
+            'firstDate': first_date,
+            'protocolAgeDays': (datetime.now(timezone.utc) - datetime.strptime(first_date, '%Y-%m-%d').replace(tzinfo=timezone.utc)).days,
+        },
     }
 
     json.dump(output, open(OUT, 'w'))

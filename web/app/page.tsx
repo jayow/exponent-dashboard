@@ -1,5 +1,5 @@
 import { TvlOverview } from '@/components/TvlOverview';
-import { TvlChart } from '@/components/TvlChart';
+import { HistoricalChart } from '@/components/HistoricalChart';
 import { MarketCards } from '@/components/MarketCards';
 
 export default function HomePage() {
@@ -16,27 +16,9 @@ export default function HomePage() {
         </div>
       </header>
 
-      {/* Protocol overview — TVL headline + platform breakdown charts */}
       <TvlOverview />
-
-      {/* Historical TVL chart — protocol / by platform / by market */}
-      <TvlChart />
-
-      {/* Per-market table — click to drill into on-chain activity */}
+      <HistoricalChart />
       <MarketCards />
-
-      <footer className="mt-10 text-center text-xs text-white/20">
-        Market data fetched live from Exponent API · On-chain activity indexed via Helius.
-      </footer>
     </main>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-xl border border-eclipse-700/60 bg-eclipse-900/60 backdrop-blur px-3 py-2">
-      <div className="text-[10px] uppercase tracking-wider text-solar-400">{label}</div>
-      <div className="mt-0.5 text-base font-semibold text-white tabular-nums">{value}</div>
-    </div>
   );
 }

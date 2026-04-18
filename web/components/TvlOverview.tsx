@@ -31,14 +31,24 @@ const COLORS = [
   '#a78bfa', '#fb923c', '#34d399', '#f472b6', '#facc15',
 ];
 
+type HistStats = {
+  activeMarkets: number;
+  expiredMarkets: number;
+  platforms: number;
+  peakTvl: number;
+  peakDate: string;
+  totalVolume: number;
+  uniqueHolders: number;
+  protocolAgeDays: number;
+};
+
 export function TvlOverview() {
   const [data, setData] = useState<LiveData | null>(null);
+  const [stats, setStats] = useState<HistStats | null>(null);
 
   useEffect(() => {
-    fetch('/markets-live.json')
-      .then(r => r.json())
-      .then(setData)
-      .catch(() => null);
+    fetch('/markets-live.json').then(r => r.json()).then(setData).catch(() => null);
+    fetch('/tvl-history.json').then(r => r.json()).then(d => setStats(d.stats)).catch(() => null);
   }, []);
 
   const byPlatform = useMemo(() => {
@@ -103,12 +113,28 @@ export function TvlOverview() {
               <div className="text-lg text-white/50 tabular-nums">${(idle / 1e6).toFixed(1)}M</div>
             </div>
             <div className="mb-1">
+              <div className="text-[10px] text-white/30">All-Time Volume</div>
+              <div className="text-lg text-white/50 tabular-nums">{stats ? fmtCompact(stats.totalVolume) : '–'}</div>
+            </div>
+            <div className="mb-1">
+              <div className="text-[10px] text-white/30">Peak TVL</div>
+              <div className="text-lg text-white/50 tabular-nums">{stats ? fmtCompact(stats.peakTvl) : '–'}</div>
+            </div>
+            <div className="mb-1">
+              <div className="text-[10px] text-white/30">Holders</div>
+              <div className="text-lg text-white/50 tabular-nums">{stats ? stats.uniqueHolders.toLocaleString() : '–'}</div>
+            </div>
+            <div className="mb-1">
               <div className="text-[10px] text-white/30">Markets</div>
-              <div className="text-lg text-white/50">{data.markets.length}</div>
+              <div className="text-lg text-white/50">{stats ? `${stats.activeMarkets} / ${stats.activeMarkets + stats.expiredMarkets}` : data.markets.length}</div>
             </div>
             <div className="mb-1">
               <div className="text-[10px] text-white/30">Platforms</div>
-              <div className="text-lg text-white/50">{byPlatform.length}</div>
+              <div className="text-lg text-white/50">{stats ? stats.platforms : byPlatform.length}</div>
+            </div>
+            <div className="mb-1">
+              <div className="text-[10px] text-white/30">Age</div>
+              <div className="text-lg text-white/50">{stats ? `${stats.protocolAgeDays}d` : '–'}</div>
             </div>
           </div>
         );
@@ -180,4 +206,11 @@ export function TvlOverview() {
       </div>
     </div>
   );
+}
+
+function fmtCompact(n: number) {
+  if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
+  if (n >= 1e6) return `$${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `$${(n / 1e3).toFixed(0)}K`;
+  return `$${n.toFixed(0)}`;
 }
