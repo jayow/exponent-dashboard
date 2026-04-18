@@ -166,8 +166,8 @@ def main():
 
     if not hist_only:
         results['web_data'] = run(
-            'python3 src/build_web_data.py',
-            'Step 11: Build wallet activity data',
+            'python3 src/build_wallet_events.py',
+            'Step 11: Build wallet event files from enriched data',
             timeout=300
         )
 
