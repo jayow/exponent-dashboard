@@ -11,7 +11,7 @@ type Snapshot = { market: string; type: string; holders: number; totalBalance: n
 type HoldersData = Record<string, Snapshot>;
 type FlowData = { inflow: number[]; outflow: number[] };
 
-type ChartMetric = 'tvl' | 'flow' | 'volume' | 'apy';
+type ChartMetric = 'tvl' | 'flow' | 'volume' | 'apy' | 'ptPrice';
 type HolderTab = 'pt' | 'yt' | 'lp';
 type Range = '30d' | '90d' | '1y' | 'all';
 
@@ -23,6 +23,7 @@ function MarketView() {
   const [liveMarkets, setLiveMarkets] = useState<any>(null);
   const [holders, setHolders] = useState<HoldersData | null>(null);
   const [histData, setHistData] = useState<any>(null);
+  const [analyticsData, setAnalyticsData] = useState<any>(null);
   const [chartMetric, setChartMetric] = useState<ChartMetric>('tvl');
   const [holderTab, setHolderTab] = useState<HolderTab>('pt');
   const [range, setRange] = useState<Range>('all');
@@ -32,6 +33,7 @@ function MarketView() {
     fetch('/markets-live.json').then(r => r.json()).then(setLiveMarkets).catch(() => null);
     fetch('/holders.json').then(r => r.json()).then(setHolders).catch(() => null);
     fetch('/tvl-history.json').then(r => r.json()).then(setHistData).catch(() => null);
+    fetch('/analytics.json').then(r => r.json()).then(setAnalyticsData).catch(() => null);
   }, []);
 
   const marketInfo = useMemo(() => {
@@ -73,15 +75,28 @@ function MarketView() {
     }
     if (chartMetric === 'apy') {
       const underlying = (histData.underlyingApyByMarket?.[key] || []).slice(startIdx);
-      const implied = (histData.impliedApyByMarket?.[key] || []).slice(startIdx);
-      return slicedDates.map((d: string, i: number) => ({
+      const impliedSnap = (histData.impliedApyByMarket?.[key] || []).slice(startIdx);
+      // Use derived implied APY from PT trade prices (analytics.json)
+      const derivedApy = analyticsData?.impliedApyByMarket?.[key] || {};
+      return slicedDates.map((d: string, i: number) => {
+        const derivedVal = derivedApy[d] ? derivedApy[d] * 100 : 0;
+        const snapVal = (impliedSnap[i] || 0) * 100;
+        return {
+          date: d,
+          Underlying: (underlying[i] || 0) * 100,
+          Implied: derivedVal || snapVal,
+        };
+      });
+    }
+    if (chartMetric === 'ptPrice') {
+      const ptPrices = analyticsData?.ptPriceByMarket?.[key] || {};
+      return slicedDates.map((d: string) => ({
         date: d,
-        Underlying: (underlying[i] || 0) * 100,
-        Implied: (implied[i] || 0) * 100,
-      }));
+        'PT Price': ptPrices[d] || null,
+      })).filter((r: any) => r['PT Price'] !== null);
     }
     return [];
-  }, [histData, key, chartMetric, range]);
+  }, [histData, analyticsData, key, chartMetric, range]);
 
   const ptData = holders?.[`${key}:pt`];
   const ytData = holders?.[`${key}:yt`];
@@ -143,12 +158,12 @@ function MarketView() {
       <div className="mt-8 mb-8">
         <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
           <div className="flex items-center gap-1">
-            {(['tvl', 'flow', 'volume', 'apy'] as ChartMetric[]).map(m => (
+            {(['tvl', 'flow', 'volume', 'apy', 'ptPrice'] as ChartMetric[]).map(m => (
               <button key={m} onClick={() => setChartMetric(m)}
                 className={`text-xs px-3 py-1.5 rounded-lg border transition ${
                   chartMetric === m ? 'border-white/30 bg-white/10 text-white' : 'border-white/10 text-white/40 hover:text-white'
                 }`}>
-                {m === 'tvl' ? 'TVL' : m === 'flow' ? 'Inflow / Outflow' : m === 'volume' ? 'Volume' : 'APY'}
+                {m === 'tvl' ? 'TVL' : m === 'flow' ? 'Inflow / Outflow' : m === 'volume' ? 'Volume' : m === 'apy' ? 'APY' : 'PT Price'}
               </button>
             ))}
           </div>
@@ -166,7 +181,17 @@ function MarketView() {
 
         <div className="rounded-2xl border border-eclipse-700/60 bg-eclipse-900/40 backdrop-blur p-4">
           <ResponsiveContainer width="100%" height={300}>
-            {chartMetric === 'apy' ? (
+            {chartMetric === 'ptPrice' ? (
+              <LineChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+                <XAxis dataKey="date" tick={{ fill: '#8888aa', fontSize: 11 }} axisLine={false} tickLine={false}
+                  tickFormatter={fmtTick} interval={interval} />
+                <YAxis tick={{ fill: '#8888aa', fontSize: 11 }} axisLine={false} tickLine={false}
+                  tickFormatter={v => v.toFixed(3)} width={55} domain={['auto', 'auto']} />
+                <Tooltip contentStyle={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: 8, fontSize: 13, color: '#fff' }}
+                  formatter={(v: any) => [Number(v).toFixed(4), 'PT Price']} />
+                <Line type="monotone" dataKey="PT Price" stroke="#38bdf8" strokeWidth={2} dot={false} connectNulls />
+              </LineChart>
+            ) : chartMetric === 'apy' ? (
               <LineChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
                 <XAxis dataKey="date" tick={{ fill: '#8888aa', fontSize: 11 }} axisLine={false} tickLine={false}
                   tickFormatter={fmtTick} interval={interval} />
