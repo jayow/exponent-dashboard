@@ -136,10 +136,13 @@ export function HistoricalChart() {
 
       if (view === 'protocol') {
         const cp = analyticsData.claimsProtocol || { count: [], usd: [] };
-        const rows = aDates.slice(aStartIdx).map((d: string, i: number) => ({
-          date: d, 'Claim Count': cp.count[aStartIdx + i] || 0, 'Claim USD': cp.usd[aStartIdx + i] || 0,
-        }));
-        return { chartData: rows, series: ['Claim USD'], seriesColors: { 'Claim Count': '#facc15', 'Claim USD': '#facc15' } };
+        let cumClaim = 0;
+        for (let i = 0; i < aStartIdx; i++) cumClaim += cp.usd[i] || 0;
+        const rows = aDates.slice(aStartIdx).map((d: string, i: number) => {
+          cumClaim += cp.usd[aStartIdx + i] || 0;
+          return { date: d, 'Claim USD': cp.usd[aStartIdx + i] || 0, Cumulative: cumClaim };
+        });
+        return { chartData: rows, series: ['Claim USD'], seriesColors: { 'Claim USD': '#facc15', Cumulative: '#a78bfa' } };
       }
       // Platform/Market
       const source = view === 'platform' ? analyticsData.claimsByPlatform : analyticsData.claimsByMarket;
@@ -152,11 +155,21 @@ export function HistoricalChart() {
       const keys = entries.map(e => e.key);
       const colors: Record<string, string> = {};
       keys.forEach((k, i) => { colors[k] = COLORS[i % COLORS.length]; });
+      let cumClaim2 = 0;
+      for (let i = 0; i < aStartIdx; i++) {
+        keys.forEach(k => { cumClaim2 += (source[k]?.usd || [])[i] || 0; });
+      }
       const rows = aDates.slice(aStartIdx).map((d: string, i: number) => {
         const row: Record<string, any> = { date: d };
-        keys.forEach(k => { row[k] = (source[k]?.usd || [])[aStartIdx + i] || 0; });
+        keys.forEach(k => {
+          const v = (source[k]?.usd || [])[aStartIdx + i] || 0;
+          row[k] = v;
+          cumClaim2 += v;
+        });
+        row['Cumulative'] = cumClaim2;
         return row;
       });
+      colors['Cumulative'] = '#a78bfa';
       return { chartData: rows, series: keys, seriesColors: colors };
     }
 
@@ -335,6 +348,20 @@ export function HistoricalChart() {
       return row;
     });
 
+    // Add cumulative for volume view
+    if (metric === 'volume') {
+      let cumVol = 0;
+      // Pre-sum before visible range
+      for (let i = 0; i < startIdx; i++) {
+        for (const e of ranked) cumVol += (e.data.inflow[i] || 0) + (e.data.outflow[i] || 0);
+      }
+      for (const row of rows) {
+        keys.forEach(k => { cumVol += row[k] || 0; });
+        row['Cumulative'] = cumVol;
+      }
+      colors['Cumulative'] = '#a78bfa';
+    }
+
     return { chartData: rows, series: keys, seriesColors: colors };
   }, [data, metric, view, range, hidden, hideExpired, activeMarketKeys]);
 
@@ -477,7 +504,7 @@ export function HistoricalChart() {
                 tickFormatter={fmtTick} interval={interval} />
               <YAxis yAxisId="left" tick={{ fill: '#8888aa', fontSize: 11 }} axisLine={false} tickLine={false}
                 tickFormatter={fmtAxis} width={55} />
-              {metric === 'volume' && view === 'protocol' && (
+              {(metric === 'volume' || metric === 'claims') && (
                 <YAxis yAxisId="right" orientation="right" tick={{ fill: '#a78bfa', fontSize: 11 }} axisLine={false} tickLine={false}
                   tickFormatter={fmtAxis} width={55} />
               )}
@@ -576,22 +603,36 @@ export function HistoricalChart() {
               )}
 
               {/* Volume bars + cumulative line */}
-              {metric === 'volume' && view === 'protocol' && (
+              {metric === 'volume' && (
                 <>
-                  <Bar dataKey="Volume" fill="#38bdf8" fillOpacity={0.7} yAxisId="left" />
+                  {view === 'protocol' ? (
+                    <Bar dataKey="Volume" fill="#38bdf8" fillOpacity={0.7} yAxisId="left" />
+                  ) : (
+                    series.map((k) => (
+                      <Bar key={k} dataKey={k} stackId="1" fill={seriesColors[k]} fillOpacity={0.7} yAxisId="left" />
+                    ))
+                  )}
                   <Line type="monotone" dataKey="Cumulative" stroke="#a78bfa" strokeWidth={2} dot={false} yAxisId="right" />
                 </>
               )}
-              {metric === 'volume' && view !== 'protocol' && (
-                series.map((k) => (
-                  <Bar key={k} dataKey={k} stackId="1" fill={seriesColors[k]} fillOpacity={0.7} yAxisId="left" />
-                ))
-              )}
-            {/* Activity + Claims bars */}
-              {(metric === 'activity' || metric === 'claims') && (
+              {/* Activity bars */}
+              {metric === 'activity' && (
                 series.map((k) => (
                   <Bar key={k} dataKey={k} stackId="1" fill={seriesColors[k]} fillOpacity={0.8} yAxisId="left" />
                 ))
+              )}
+              {/* Claims bars + cumulative line */}
+              {metric === 'claims' && (
+                <>
+                  {view === 'protocol' ? (
+                    <Bar dataKey="Claim USD" fill="#facc15" fillOpacity={0.7} yAxisId="left" />
+                  ) : (
+                    series.map((k) => (
+                      <Bar key={k} dataKey={k} stackId="1" fill={seriesColors[k]} fillOpacity={0.8} yAxisId="left" />
+                    ))
+                  )}
+                  <Line type="monotone" dataKey="Cumulative" stroke="#a78bfa" strokeWidth={2} dot={false} yAxisId="right" />
+                </>
               )}
             </ComposedChart>
           )}
@@ -605,11 +646,11 @@ export function HistoricalChart() {
               <span className="flex items-center gap-1 text-[11px]"><span className="w-2.5 h-2.5 rounded-full bg-red-400" /> Outflow</span>
             </>
           )}
-          {metric === 'volume' && view === 'protocol' && (
-            <>
-              <span className="flex items-center gap-1 text-[11px]"><span className="w-2.5 h-2.5 rounded-full" style={{ background: '#38bdf8' }} /> Daily Volume</span>
-              <span className="flex items-center gap-1 text-[11px]"><span className="w-2.5 h-2.5 rounded-full" style={{ background: '#a78bfa' }} /> Cumulative</span>
-            </>
+          {metric === 'volume' && (
+            <span className="flex items-center gap-1 text-[11px]"><span className="w-2.5 h-2.5 rounded-full" style={{ background: '#a78bfa' }} /> Cumulative</span>
+          )}
+          {metric === 'claims' && (
+            <span className="flex items-center gap-1 text-[11px]"><span className="w-2.5 h-2.5 rounded-full" style={{ background: '#a78bfa' }} /> Cumulative</span>
           )}
           {metric === 'apy' && apyView === 'current' && (
             <>
