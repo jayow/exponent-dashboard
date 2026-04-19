@@ -25,7 +25,7 @@ type TvlHistory = {
   holderConcentration?: Record<string, Concentration>;
 };
 
-type View = 'leaderboard' | 'growth' | 'retention' | 'concentration';
+type View = 'leaderboard' | 'growth' | 'retention' | 'concentration' | 'whales' | 'tradeSizes';
 type SortKey = 'holdingUsd' | 'claimUsd' | 'txs' | 'markets' | 'firstDate';
 type Range = '30d' | '90d' | '1y' | 'all';
 
@@ -105,6 +105,8 @@ export function HolderAnalytics() {
         <div className="flex items-center gap-1">
           {([
             { key: 'leaderboard', label: 'Leaderboard' },
+            { key: 'whales', label: 'Whale Activity' },
+            { key: 'tradeSizes', label: 'Trade Sizes' },
             { key: 'growth', label: 'Growth' },
             { key: 'retention', label: 'Retention' },
             { key: 'concentration', label: 'Concentration' },
@@ -250,6 +252,61 @@ export function HolderAnalytics() {
               )}
             </tbody>
           </table>
+        )}
+
+        {/* Whale Activity */}
+        {view === 'whales' && (
+          <table className="w-full text-sm">
+            <thead className="text-xs uppercase tracking-wider text-white/40 bg-eclipse-900/60">
+              <tr>
+                <th className="cell">#</th>
+                <th className="cell text-left">Date</th>
+                <th className="cell text-left">Wallet</th>
+                <th className="cell text-left">Market</th>
+                <th className="cell text-left">Action</th>
+                <th className="cell text-right">USD</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-eclipse-700/40 text-[13px]">
+              {(analytics as any)?.whaleEvents?.map((w: any, i: number) => (
+                <tr key={i} className="hover:bg-eclipse-800/40">
+                  <td className="cell text-white/30 tabular-nums">{i + 1}</td>
+                  <td className="cell text-white/50">{w.date}</td>
+                  <td className="cell text-xs text-white/70 font-mono">{w.wallet}</td>
+                  <td className="cell text-white/60">{w.market}</td>
+                  <td className="cell text-white/50">{w.action}</td>
+                  <td className="cell text-right tabular-nums text-emerald-400/80">{fmtUsd(w.usd)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        {/* Trade Sizes */}
+        {view === 'tradeSizes' && (
+          <div className="p-4">
+            <div className="space-y-3">
+              {Object.entries((analytics as any)?.tradeSizes || {}).map(([bucket, count]: [string, any]) => {
+                const total = Object.values((analytics as any)?.tradeSizes || {}).reduce((s: number, v: any) => s + v, 0) as number;
+                const pct = total > 0 ? (count / total) * 100 : 0;
+                return (
+                  <div key={bucket} className="flex items-center gap-3">
+                    <span className="text-sm text-white/50 w-24 text-right">{bucket}</span>
+                    <div className="flex-1 h-6 bg-white/5 rounded-full overflow-hidden">
+                      <div className="h-full bg-gradient-to-r from-blue-500/60 to-purple-500/60 rounded-full flex items-center px-2"
+                        style={{ width: `${Math.max(2, pct)}%` }}>
+                        {pct > 8 && <span className="text-[10px] text-white/80">{count.toLocaleString()}</span>}
+                      </div>
+                    </div>
+                    <span className="text-xs text-white/40 w-16 text-right">{pct.toFixed(1)}%</span>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="mt-4 text-xs text-white/30 text-center">
+              {Object.values((analytics as any)?.tradeSizes || {}).reduce((s: number, v: any) => s + v, 0).toLocaleString()} total trades
+            </div>
+          </div>
         )}
       </div>
     </div>

@@ -355,6 +355,118 @@ def main():
         }
 
     # ========================================
+    # 6. Whale activity — largest single-day events
+    # ========================================
+    print('Computing whale activity...')
+    whale_events = []
+    for e in events:
+        action = e.get('action')
+        if not action: continue
+        tc = e.get('tokenChanges', {})
+        if not tc: continue
+        bt = e.get('blockTime', 0)
+        date = datetime.fromtimestamp(bt, tz=timezone.utc).strftime('%Y-%m-%d')
+        market = resolve_market(e)
+        pk = MARKET_PRICE_KEY.get(market, 'USD')
+        price = get_price(date, pk)
+
+        # Estimate USD value
+        usd = 0
+        for mint, delta in tc.items():
+            sym = MINT_SYMBOLS_MAP.get(mint, '')
+            if mint in TOKEN_PRICES:
+                usd += abs(delta) * TOKEN_PRICES[mint]
+            elif sym in {'SOL', 'USDC', 'USDT', 'USX', 'eUSX', 'ONyc', 'BulkSOL', 'hyloSOL', 'fragSOL', 'kySOL', 'dSOL'}:
+                usd += abs(delta) * price
+            elif sym.startswith(('SY-', 'PT-', 'YT-')):
+                usd += abs(delta) * price
+
+        if usd > 50000:
+            whale_events.append({
+                'date': date,
+                'wallet': e.get('signer', '')[:20] + '...',
+                'market': market,
+                'action': action,
+                'usd': round(usd),
+            })
+
+    whale_events.sort(key=lambda x: -x['usd'])
+    whale_events = whale_events[:100]
+
+    # ========================================
+    # 7. Trade size distribution
+    # ========================================
+    print('Computing trade size distribution...')
+    trade_sizes = {'<$100': 0, '$100-$1K': 0, '$1K-$10K': 0, '$10K-$100K': 0, '$100K-$1M': 0, '>$1M': 0}
+    trade_actions = {'buyYt', 'sellYt', 'buyPt', 'sellPt'}
+    for e in events:
+        if e.get('action') not in trade_actions: continue
+        tc = e.get('tokenChanges', {})
+        bt = e.get('blockTime', 0)
+        date = datetime.fromtimestamp(bt, tz=timezone.utc).strftime('%Y-%m-%d')
+        market = resolve_market(e)
+        pk = MARKET_PRICE_KEY.get(market, 'USD')
+        price = get_price(date, pk)
+        usd = sum(abs(d) * price for d in tc.values())
+        if usd < 100: trade_sizes['<$100'] += 1
+        elif usd < 1000: trade_sizes['$100-$1K'] += 1
+        elif usd < 10000: trade_sizes['$1K-$10K'] += 1
+        elif usd < 100000: trade_sizes['$10K-$100K'] += 1
+        elif usd < 1000000: trade_sizes['$100K-$1M'] += 1
+        else: trade_sizes['>$1M'] += 1
+
+    # ========================================
+    # 8. Market lifecycle stats
+    # ========================================
+    print('Computing market lifecycle stats...')
+    market_lifecycles = {}
+    for mk, ma in market_activity.items():
+        if mk == 'unknown': continue
+        meta = MARKET_META.get(mk, {})
+        mat_date = meta.get('maturityDate', '')
+        first_date = None
+        last_date = None
+        for e in events:
+            if resolve_market(e) != mk: continue
+            bt = e.get('blockTime', 0)
+            d = datetime.fromtimestamp(bt, tz=timezone.utc).strftime('%Y-%m-%d')
+            if not first_date or d < first_date: first_date = d
+            if not last_date or d > last_date: last_date = d
+
+        if first_date and mat_date:
+            lifespan = (datetime.strptime(mat_date, '%Y-%m-%d') - datetime.strptime(first_date, '%Y-%m-%d')).days
+        else:
+            lifespan = 0
+
+        market_lifecycles[mk] = {
+            'platform': normalize_platform(MARKET_PLATFORM.get(mk, '')),
+            'status': meta.get('status', 'expired'),
+            'maturityDate': mat_date,
+            'firstActivity': first_date,
+            'lastActivity': last_date,
+            'lifespanDays': lifespan,
+            'txs': ma['txs'],
+            'users': len(ma['users']),
+        }
+
+    # Aggregate lifecycle stats
+    lifespans = [v['lifespanDays'] for v in market_lifecycles.values() if v['lifespanDays'] > 0]
+    lifecycle_summary = {
+        'totalMarkets': len(market_lifecycles),
+        'avgLifespanDays': round(sum(lifespans) / max(1, len(lifespans))),
+        'medianLifespanDays': sorted(lifespans)[len(lifespans)//2] if lifespans else 0,
+        'shortestDays': min(lifespans) if lifespans else 0,
+        'longestDays': max(lifespans) if lifespans else 0,
+    }
+
+    # Markets per month (creation velocity)
+    markets_by_month = defaultdict(int)
+    for mk, lc in market_lifecycles.items():
+        if lc.get('firstActivity'):
+            month = lc['firstActivity'][:7]
+            markets_by_month[month] += 1
+
+    # ========================================
     # Build output
     # ========================================
     print('Building output...')
@@ -422,6 +534,16 @@ def main():
 
         # For MarketCards: activity columns per market
         'marketActivity': market_cols,
+
+        # Whale events (top 100 by USD)
+        'whaleEvents': whale_events,
+
+        # Trade size distribution
+        'tradeSizes': trade_sizes,
+
+        # Market lifecycle
+        'lifecycleSummary': lifecycle_summary,
+        'marketsPerMonth': dict(markets_by_month),
 
         # Stats
         'stats': {

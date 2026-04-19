@@ -32,11 +32,11 @@ export function MarketLifecycle() {
   const [data, setData] = useState<LifecycleEntry[] | null>(null);
   const [showExpired, setShowExpired] = useState(true);
 
+  const [statsData, setStatsData] = useState<any>(null);
+
   useEffect(() => {
-    fetch('/tvl-history.json')
-      .then(r => r.json())
-      .then(d => setData(d.lifecycle || []))
-      .catch(() => null);
+    fetch('/tvl-history.json').then(r => r.json()).then(d => setData(d.lifecycle || [])).catch(() => null);
+    fetch('/analytics.json').then(r => r.json()).then(setStatsData).catch(() => null);
   }, []);
 
   const filtered = useMemo(() => {
@@ -84,6 +84,17 @@ export function MarketLifecycle() {
           Active Only
         </button>
       </div>
+
+      {/* Lifecycle stats */}
+      {statsData?.lifecycleSummary && (
+        <div className="flex items-center gap-6 mb-4 text-sm flex-wrap">
+          <span className="text-white/40">Markets: <span className="text-white">{statsData.lifecycleSummary.totalMarkets}</span></span>
+          <span className="text-white/40">Avg lifespan: <span className="text-white">{statsData.lifecycleSummary.avgLifespanDays}d</span></span>
+          <span className="text-white/40">Median: <span className="text-white">{statsData.lifecycleSummary.medianLifespanDays}d</span></span>
+          <span className="text-white/40">Shortest: <span className="text-white">{statsData.lifecycleSummary.shortestDays}d</span></span>
+          <span className="text-white/40">Longest: <span className="text-white">{statsData.lifecycleSummary.longestDays}d</span></span>
+        </div>
+      )}
 
       <div className="rounded-2xl border border-eclipse-700/60 bg-eclipse-900/40 backdrop-blur p-4 overflow-x-auto">
         <div className="relative">
