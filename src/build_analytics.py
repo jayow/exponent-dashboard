@@ -160,16 +160,27 @@ def main():
         claim_usd = 0
         pk = MARKET_PRICE_KEY.get(market, 'USD')
         price = get_price(date, pk)
+        # Symbol-based price lookup
+        _sol = PRICES.get('SOL', {}).get(date, 88)
+        _sym_prices = {
+            'SOL': _sol, 'USDC': 1, 'USDT': 1, 'USD': 1, 'USX': 1, 'eUSX': 1,
+            'ONyc': 1, 'USDC+': 1, 'sHYUSD': 1, 'syrupUSDC': 1, 'legacyUSD*': 1,
+            'kUSDC': 1, 'mUSDC': 1, 'mUSDT': 1, 'ALP': 1, 'jlUSDG': 1, 'USDe': 1,
+            'JLP': 2, 'JTO': 1.80, 'JUP': 0.18, 'SWTCH': 0.003,
+            'kySOL': _sol*1.28, 'BulkSOL': _sol*1.08, 'hyloSOL': _sol*1.05,
+            'dSOL': _sol*1.03, 'dzSOL': _sol*1.05, 'fragSOL': _sol*1.11,
+            'MLP': _sol, 'INF': _sol*1.15, 'CRT': _sol*0.5,
+        }
         for mint, delta in e.get('tokenChanges', {}).items():
             if delta <= 0:
                 continue
             if mint in TOKEN_PRICES:
                 claim_usd += delta * TOKEN_PRICES[mint]
-            elif mint in PRICEABLE_MINTS:
-                claim_usd += delta * price
             else:
                 sym = MINT_SYMBOLS_MAP.get(mint, '')
-                if sym.startswith(('SY-', 'PT-', 'YT-')) or not sym or sym.endswith('…'):
+                if sym in _sym_prices:
+                    claim_usd += delta * _sym_prices[sym]
+                elif mint in PRICEABLE_MINTS or sym.startswith(('SY-', 'PT-', 'YT-')) or sym.endswith('…'):
                     claim_usd += delta * price
 
         daily_claims_protocol[date]['count'] += 1

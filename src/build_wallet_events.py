@@ -19,11 +19,34 @@ mint_symbols_path = os.path.join(DATA_DIR, 'mint_symbols.json')
 if os.path.exists(mint_symbols_path):
     MINT_SYMBOLS = json.load(open(mint_symbols_path))
 
-# Load per-token prices
+# Load per-token prices (by mint AND by symbol)
 TOKEN_PRICES = {}
+SYMBOL_PRICES = {}
 token_prices_path = os.path.join(DATA_DIR, 'token_prices.json')
 if os.path.exists(token_prices_path):
     TOKEN_PRICES = json.load(open(token_prices_path))
+    # Build symbol→price from known mappings
+    for mint, price in TOKEN_PRICES.items():
+        sym = MINT_SYMBOLS.get(mint, '')
+        if sym and sym not in SYMBOL_PRICES:
+            SYMBOL_PRICES[sym] = price
+
+# Add symbol-based prices for common tokens
+_sol_approx = TOKEN_PRICES.get('So11111111111111111111111111111111111111112', 88)
+SYMBOL_PRICES.update({
+    'SOL': _sol_approx, 'USDC': 1.0, 'USDT': 1.0, 'USD': 1.0,
+    'USX': 1.0, 'eUSX': 1.0, 'ONyc': 1.0, 'USDC+': 1.0,
+    'sHYUSD': 1.0, 'syrupUSDC': 1.0, 'legacyUSD*': 1.0, 'kUSDC': 1.0,
+    'mUSDC': 1.0, 'mUSDT': 1.0, 'ALP': 1.0, 'jlUSDG': 1.0,
+    'kUSDC-2F': 1.0, 'mUSDC-2F': 1.0, 'USDe': 1.0, 'sUSDE': 1.0,
+    'JLP': 2.0, 'JTO': 1.80, 'JUP': 0.18, 'SWTCH': 0.003,
+    'kySOL': _sol_approx * 1.28, 'BulkSOL': _sol_approx * 1.08,
+    'hyloSOL': _sol_approx * 1.05, 'dSOL': _sol_approx * 1.03,
+    'dzSOL': _sol_approx * 1.05, 'dfdvSOL': _sol_approx * 1.03,
+    'fragSOL': _sol_approx * 1.11, 'jlSOL': _sol_approx * 1.05,
+    'INF': _sol_approx * 1.15, 'MLP': _sol_approx, 'CRT': _sol_approx * 0.5,
+    'stORE': _sol_approx * 0.01,
+})
 
 # Load prices for USD estimation
 PRICES = {}
@@ -192,18 +215,20 @@ def main():
                 total_usd = 0
                 for mint, delta in tc.items():
                     symbol = MINT_SYMBOLS.get(mint, mint[:8] + '…')
-                    # Resolve price: per-token price > market price for SY/PT/YT > 0
+                    # Resolve price: mint lookup > symbol lookup > market price for SY/PT/YT
                     if mint in TOKEN_PRICES:
                         token_price = TOKEN_PRICES[mint]
+                    elif symbol in SYMBOL_PRICES:
+                        token_price = SYMBOL_PRICES[symbol]
                     elif symbol.startswith(('SY-', 'PT-', 'YT-')) or mint in MARKET_UNDERLYING_MINTS or symbol.endswith('…'):
                         token_price = market_price
                     else:
-                        token_price = 0
+                        token_price = market_price  # best guess
                     usd = round(abs(delta) * token_price, 2)
                     total_usd += usd if delta > 0 else -usd
                     changes.append({'symbol': symbol, 'delta': round(delta, 6), 'usd': usd if token_price > 0 else None})
                 evt['changes'] = changes
-                evt['usd'] = round(abs(total_usd), 2) if total_usd != 0 else None
+                evt['usd'] = round(abs(total_usd), 2)
 
             wallet_events[signer].append(evt)
 
