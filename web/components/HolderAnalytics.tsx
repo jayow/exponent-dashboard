@@ -37,6 +37,7 @@ export function HolderAnalytics() {
   const [sortKey, setSortKey] = useState<SortKey>('holdingUsd');
   const [sortAsc, setSortAsc] = useState(false);
   const [range, setRange] = useState<Range>('all');
+  const [search, setSearch] = useState('');
 
   useEffect(() => {
     fetch('/analytics.json').then(r => r.json()).then(setAnalytics).catch(() => null);
@@ -45,7 +46,11 @@ export function HolderAnalytics() {
 
   const sortedUsers = useMemo(() => {
     if (!analytics) return [];
-    const arr = [...analytics.enrichedUsers];
+    let arr = [...analytics.enrichedUsers];
+    if (search) {
+      const q = search.toLowerCase();
+      arr = arr.filter(u => u.wallet.toLowerCase().includes(q));
+    }
     arr.sort((a, b) => {
       let va: number, vb: number;
       switch (sortKey) {
@@ -62,7 +67,7 @@ export function HolderAnalytics() {
       return (va - vb) * (sortAsc ? 1 : -1);
     });
     return arr;
-  }, [analytics, sortKey, sortAsc]);
+  }, [analytics, sortKey, sortAsc, search]);
 
   const concentration = useMemo(() => {
     if (!tvlData?.holderConcentration) return [];
@@ -105,7 +110,7 @@ export function HolderAnalytics() {
       <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
         <div className="flex items-center gap-1">
           {([
-            { key: 'leaderboard', label: 'Leaderboard' },
+            { key: 'leaderboard', label: 'Users' },
             { key: 'whales', label: 'Whale Activity' },
             { key: 'tradeSizes', label: 'Trade Sizes' },
             { key: 'growth', label: 'Growth' },
@@ -131,7 +136,14 @@ export function HolderAnalytics() {
       </div>
 
       <div className="rounded-2xl border border-eclipse-700/60 bg-eclipse-900/40 backdrop-blur overflow-x-auto">
-        {/* Leaderboard */}
+        {/* Users */}
+        {view === 'leaderboard' && (
+          <div className="p-3 border-b border-eclipse-700/40">
+            <input value={search} onChange={e => setSearch(e.target.value)}
+              placeholder="Search wallet address…"
+              className="w-full max-w-md bg-eclipse-800/80 border border-eclipse-600/40 focus:border-white/30 focus:outline-none rounded-md px-3 py-2 text-sm placeholder-white/20 font-mono" />
+          </div>
+        )}
         {view === 'leaderboard' && (
           <table className="w-full text-sm">
             <thead className="text-xs uppercase tracking-wider text-white/40 bg-eclipse-900/60">
