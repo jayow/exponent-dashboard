@@ -790,6 +790,118 @@ def main():
     claim_efficiency['totalClaimUsd'] = round(claim_efficiency['totalClaimUsd'], 2)
 
     # ========================================
+    # 1-2, 34. PT/YT price history + implied APY
+    # ========================================
+    print('Computing PT price history...')
+    import math
+    pt_prices_by_market = defaultdict(list)
+    for e in events:
+        action = e.get('action', '')
+        market = resolve_market(e)
+        bt = e.get('blockTime', 0)
+        if not market or not bt: continue
+        if action not in ('buyPt', 'sellPt'): continue
+        tc = e.get('tokenChanges', {})
+        underlying_amt = 0
+        pt_amt = 0
+        for mint, delta in tc.items():
+            sym = MINT_SYMBOLS_MAP.get(mint, '')
+            if sym.startswith('PT-'):
+                pt_amt = abs(delta)
+            elif sym.startswith('SY-'):
+                continue
+            elif abs(delta) > 0.001:
+                underlying_amt = abs(delta)
+        if pt_amt > 0 and underlying_amt > 0:
+            pt_price = underlying_amt / pt_amt
+            if 0.5 < pt_price < 1.5:
+                date = datetime.fromtimestamp(bt, tz=timezone.utc).strftime('%Y-%m-%d')
+                pt_prices_by_market[market].append((date, bt, round(pt_price, 6)))
+
+    # Build daily PT price + implied APY per market
+    daily_pt_price = {}
+    daily_implied_apy = {}
+    for mk, prices in pt_prices_by_market.items():
+        prices.sort(key=lambda x: x[1])
+        mat_ts = 0
+        for m_data in MARKET_META.values():
+            if m_data.get('key') == mk:
+                mat_ts = m_data.get('maturityTs', 0)
+                break
+        daily_pt = {}
+        daily_apy = {}
+        for date, bt, pt_p in prices:
+            daily_pt[date] = pt_p
+            if mat_ts > bt:
+                years = (mat_ts - bt) / (365.25 * 86400)
+                if years > 0.01:
+                    apy = (1 / pt_p) ** (1 / years) - 1
+                    daily_apy[date] = round(apy, 6)
+        if daily_pt:
+            daily_pt_price[mk] = daily_pt
+            daily_implied_apy[mk] = daily_apy
+
+    # ========================================
+    # 18. Market rollover (expired → active)
+    # ========================================
+    print('Computing market rollover...')
+    # Group markets by underlying ticker
+    _all_markets = list(MARKET_META.values())
+    markets_by_ticker = defaultdict(list)
+    for m in _all_markets:
+        ticker = m.get('underlyingTicker', '')
+        if ticker:
+            markets_by_ticker[ticker].append(m)
+
+    rollover_data = {}
+    for ticker, mkts in markets_by_ticker.items():
+        mkts.sort(key=lambda m: m.get('maturityTs', 0))
+        for i in range(len(mkts) - 1):
+            expired = mkts[i]
+            next_mk = mkts[i + 1]
+            if expired.get('status') != 'expired': continue
+
+            # Find wallets in expired market
+            expired_wallets = set()
+            next_wallets = set()
+            for e in events:
+                mk = resolve_market(e)
+                signer = e.get('signer', '')
+                if mk == expired['key'] and e.get('action') in ('buyYt', 'buyPt', 'addLiq'):
+                    expired_wallets.add(signer)
+                elif mk == next_mk['key'] and e.get('action') in ('buyYt', 'buyPt', 'addLiq'):
+                    next_wallets.add(signer)
+
+            overlap = expired_wallets & next_wallets
+            if expired_wallets:
+                rollover_data[f"{expired['key']}→{next_mk['key']}"] = {
+                    'from': expired['key'],
+                    'to': next_mk['key'],
+                    'expiredUsers': len(expired_wallets),
+                    'rolledOver': len(overlap),
+                    'rolloverPct': round(len(overlap) / len(expired_wallets) * 100, 1),
+                }
+
+    # ========================================
+    # 30. Organic vs incentivized (emission detection)
+    # ========================================
+    print('Computing organic vs incentivized...')
+    emission_symbols = {'SWTCH', 'JTO', 'JUP', 'ORCA', 'MNDE', 'BLZE', 'F'}
+    markets_with_emissions = set()
+    emission_by_market = defaultdict(int)
+
+    for e in events:
+        if e.get('action') != 'claimYield': continue
+        market = resolve_market(e)
+        tc = e.get('tokenChanges', {})
+        for mint, delta in tc.items():
+            if delta > 0:
+                sym = MINT_SYMBOLS_MAP.get(mint, '')
+                if sym in emission_symbols:
+                    markets_with_emissions.add(market)
+                    emission_by_market[market] += 1
+
+    # ========================================
     # Build output
     # ========================================
     print('Building output...')
@@ -861,6 +973,17 @@ def main():
 
         # Unclaimed yields
         'unclaimed': unclaimed,
+
+        # PT price history + implied APY (per market, sparse daily)
+        'ptPriceByMarket': daily_pt_price,
+        'impliedApyByMarket': daily_implied_apy,
+
+        # Market rollover
+        'rollover': rollover_data,
+
+        # Organic vs incentivized
+        'marketsWithEmissions': list(markets_with_emissions),
+        'emissionsByMarket': dict(emission_by_market),
 
         # Fee revenue
         'dailyFees': fee_series,
