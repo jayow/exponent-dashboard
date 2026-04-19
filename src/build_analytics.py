@@ -467,78 +467,110 @@ def main():
             markets_by_month[month] += 1
 
     # ========================================
-    # 9. Unclaimed yields
+    # 9. Unclaimed yields (active + expired markets)
     # ========================================
     print('Computing unclaimed yields...')
     holders_path = os.path.join(ROOT, 'web', 'public', 'holders.json')
-    unclaimed = {'byMarket': {}, 'byWallet': [], 'summary': {}}
+    unclaimed = {'byWallet': [], 'summary': {}}
 
+    # Per-wallet: total claimed USD from all events
+    wallet_claims_usd = defaultdict(float)
+    wallet_claim_markets = defaultdict(set)
+    for e in events:
+        if e.get('action') != 'claimYield': continue
+        signer = e.get('signer', '')
+        market = resolve_market(e)
+        bt = e.get('blockTime', 0)
+        date = datetime.fromtimestamp(bt, tz=timezone.utc).strftime('%Y-%m-%d')
+        pk = MARKET_PRICE_KEY.get(market, 'USD')
+        price = get_price(date, pk)
+        _sol = PRICES.get('SOL', {}).get(date, 88)
+        _sym_prices_local = {
+            'SOL': _sol, 'USDC': 1, 'USDT': 1, 'USD': 1, 'USX': 1, 'eUSX': 1,
+            'ONyc': 1, 'USDC+': 1, 'sHYUSD': 1, 'legacyUSD*': 1,
+            'kySOL': _sol*1.28, 'BulkSOL': _sol*1.08, 'hyloSOL': _sol*1.05,
+            'fragSOL': _sol*1.11, 'dSOL': _sol*1.03, 'MLP': _sol,
+            'JTO': 1.80, 'SWTCH': 0.003, 'JUP': 0.18,
+        }
+        for mint, delta in e.get('tokenChanges', {}).items():
+            if delta <= 0: continue
+            sym = MINT_SYMBOLS_MAP.get(mint, '')
+            if mint in TOKEN_PRICES:
+                wallet_claims_usd[signer] += delta * TOKEN_PRICES[mint]
+            elif sym in _sym_prices_local:
+                wallet_claims_usd[signer] += delta * _sym_prices_local[sym]
+            elif mint in PRICEABLE_MINTS or sym.startswith(('SY-', 'PT-', 'YT-')):
+                wallet_claims_usd[signer] += delta * price
+        wallet_claim_markets[signer].add(market)
+
+    # Per-wallet: all YT buy events (active + expired) to track who ever held YT
+    wallet_yt_bought = defaultdict(lambda: {'totalUsd': 0, 'markets': set()})
+    for e in events:
+        if e.get('action') != 'buyYt': continue
+        signer = e.get('signer', '')
+        market = resolve_market(e)
+        bt = e.get('blockTime', 0)
+        date = datetime.fromtimestamp(bt, tz=timezone.utc).strftime('%Y-%m-%d')
+        pk = MARKET_PRICE_KEY.get(market, 'USD')
+        price = get_price(date, pk)
+        tc = e.get('tokenChanges', {})
+        cost = sum(abs(d) * price for d in tc.values() if d < 0)
+        wallet_yt_bought[signer]['totalUsd'] += cost
+        wallet_yt_bought[signer]['markets'].add(market)
+
+    # Current YT holders from holders.json (active markets)
+    current_yt = defaultdict(lambda: {'positions': [], 'totalUsd': 0})
     if os.path.exists(holders_path):
         holders_data = json.load(open(holders_path))
-        live_path = os.path.join(ROOT, 'web', 'public', 'markets-live.json')
-        live_markets = json.load(open(live_path)).get('markets', []) if os.path.exists(live_path) else []
-
-        # Per-market: total claims vs estimated yield
-        claims_per_market_total = defaultdict(float)
-        for e in events:
-            if e.get('action') != 'claimYield': continue
-            market = resolve_market(e)
-            bt = e.get('blockTime', 0)
-            date = datetime.fromtimestamp(bt, tz=timezone.utc).strftime('%Y-%m-%d')
-            pk = MARKET_PRICE_KEY.get(market, 'USD')
-            price = get_price(date, pk)
-            for mint, delta in e.get('tokenChanges', {}).items():
-                if delta > 0 and (mint in PRICEABLE_MINTS or MINT_SYMBOLS_MAP.get(mint, '').startswith(('SY-', 'PT-', 'YT-'))):
-                    claims_per_market_total[market] += delta * price
-
-        # Per-wallet claim totals
-        wallet_claims = defaultdict(float)
-        for e in events:
-            if e.get('action') != 'claimYield': continue
-            signer = e.get('signer', '')
-            bt = e.get('blockTime', 0)
-            date = datetime.fromtimestamp(bt, tz=timezone.utc).strftime('%Y-%m-%d')
-            market = resolve_market(e)
-            pk = MARKET_PRICE_KEY.get(market, 'USD')
-            price = get_price(date, pk)
-            for mint, delta in e.get('tokenChanges', {}).items():
-                if delta > 0 and (mint in PRICEABLE_MINTS or MINT_SYMBOLS_MAP.get(mint, '').startswith(('SY-', 'PT-', 'YT-'))):
-                    wallet_claims[signer] += delta * price
-
-        # YT holders who haven't claimed
-        never_claimed = []
         for snap_key, snap in holders_data.items():
             if ':yt' not in snap_key: continue
             market = snap_key.replace(':yt', '')
             for h in snap.get('top', []):
                 wallet = h.get('owner', '')
-                balance_usd = h.get('usd', 0)
-                claimed = wallet_claims.get(wallet, 0)
-                never_claimed.append({
-                    'wallet': wallet,
-                    'market': market,
-                    'ytBalanceUsd': round(balance_usd, 2),
-                    'totalClaimed': round(claimed, 2),
-                    'hasClaimed': claimed > 0,
-                })
+                usd = h.get('usd', 0)
+                current_yt[wallet]['positions'].append({'market': market, 'usd': round(usd, 2)})
+                current_yt[wallet]['totalUsd'] += usd
 
-        never_claimed.sort(key=lambda x: -x['ytBalanceUsd'])
+    # Build per-wallet unclaimed summary
+    all_yt_wallets = set(wallet_yt_bought.keys()) | set(current_yt.keys())
+    wallet_unclaimed = []
+    for wallet in all_yt_wallets:
+        bought = wallet_yt_bought.get(wallet, {'totalUsd': 0, 'markets': set()})
+        current = current_yt.get(wallet, {'totalUsd': 0, 'positions': []})
+        claimed = wallet_claims_usd.get(wallet, 0)
+        claim_mkts = wallet_claim_markets.get(wallet, set())
+        all_markets = bought['markets'] | set(p['market'] for p in current['positions']) | claim_mkts
 
-        # Summary
-        total_yt_holders = len(set(x['wallet'] for x in never_claimed))
-        total_never_claimed = len(set(x['wallet'] for x in never_claimed if not x['hasClaimed']))
-        total_yt_usd = sum(x['ytBalanceUsd'] for x in never_claimed)
+        wallet_unclaimed.append({
+            'wallet': wallet,
+            'currentYtUsd': round(current['totalUsd'], 2),
+            'totalBoughtUsd': round(bought['totalUsd'], 2),
+            'totalClaimedUsd': round(claimed, 2),
+            'markets': len(all_markets),
+            'activePositions': len(current['positions']),
+            'hasClaimed': claimed > 0,
+        })
 
-        unclaimed = {
-            'byWallet': never_claimed[:200],
-            'summary': {
-                'totalYtHolders': total_yt_holders,
-                'neverClaimed': total_never_claimed,
-                'neverClaimedPct': round(total_never_claimed / max(1, total_yt_holders) * 100, 1),
-                'totalYtPositionUsd': round(total_yt_usd),
-                'totalClaimedUsd': round(sum(wallet_claims.values())),
-            },
-        }
+    wallet_unclaimed.sort(key=lambda x: -(x['currentYtUsd'] + x['totalBoughtUsd']))
+
+    total_wallets = len(wallet_unclaimed)
+    never_claimed = sum(1 for w in wallet_unclaimed if not w['hasClaimed'])
+    with_active = sum(1 for w in wallet_unclaimed if w['activePositions'] > 0)
+    active_never = sum(1 for w in wallet_unclaimed if w['activePositions'] > 0 and not w['hasClaimed'])
+
+    unclaimed = {
+        'byWallet': wallet_unclaimed[:200],
+        'summary': {
+            'totalYtWallets': total_wallets,
+            'neverClaimed': never_claimed,
+            'neverClaimedPct': round(never_claimed / max(1, total_wallets) * 100, 1),
+            'withActivePositions': with_active,
+            'activeNeverClaimed': active_never,
+            'totalCurrentYtUsd': round(sum(w['currentYtUsd'] for w in wallet_unclaimed)),
+            'totalClaimedUsd': round(sum(wallet_claims_usd.values())),
+            'totalBoughtUsd': round(sum(w['totalBoughtUsd'] for w in wallet_unclaimed)),
+        },
+    }
 
     # ========================================
     # Build output

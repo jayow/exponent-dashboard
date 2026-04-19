@@ -259,14 +259,15 @@ export function HolderAnalytics() {
         {view === 'unclaimed' && (() => {
           const uc = (analytics as any)?.unclaimed || {};
           const summary = uc.summary || {};
-          const wallets = (uc.byWallet || []).filter((w: any) => !w.hasClaimed);
+          const wallets = uc.byWallet || [];
           return (
             <>
               <div className="p-4 border-b border-eclipse-700/40">
                 <div className="flex items-center gap-6 text-sm flex-wrap">
-                  <span className="text-white/40">YT holders: <span className="text-white">{summary.totalYtHolders?.toLocaleString()}</span></span>
+                  <span className="text-white/40">YT wallets: <span className="text-white">{summary.totalYtWallets?.toLocaleString()}</span></span>
                   <span className="text-white/40">Never claimed: <span className="text-rose-400">{summary.neverClaimed?.toLocaleString()} ({summary.neverClaimedPct}%)</span></span>
-                  <span className="text-white/40">YT positions: <span className="text-white">{fmtUsd(summary.totalYtPositionUsd || 0)}</span></span>
+                  <span className="text-white/40">Active positions: <span className="text-white">{summary.withActivePositions?.toLocaleString()}</span></span>
+                  <span className="text-white/40">Total bought: <span className="text-white">{fmtUsd(summary.totalBoughtUsd || 0)}</span></span>
                   <span className="text-white/40">Total claimed: <span className="text-emerald-400">{fmtUsd(summary.totalClaimedUsd || 0)}</span></span>
                 </div>
               </div>
@@ -275,22 +276,32 @@ export function HolderAnalytics() {
                   <tr>
                     <th className="cell">#</th>
                     <th className="cell text-left">Wallet</th>
-                    <th className="cell text-left">Market</th>
-                    <th className="cell text-right">YT Position</th>
+                    <th className="cell text-right">Current YT</th>
+                    <th className="cell text-right">Total Bought</th>
                     <th className="cell text-right">Total Claimed</th>
+                    <th className="cell text-right">Markets</th>
                     <th className="cell">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-eclipse-700/40 text-[13px]">
-                  {wallets.slice(0, 50).map((w: any, i: number) => (
-                    <tr key={`${w.wallet}-${w.market}`} onClick={() => router.push(`/wallet/?addr=${w.wallet}`)}
+                  {wallets.slice(0, 100).map((w: any, i: number) => (
+                    <tr key={w.wallet} onClick={() => router.push(`/wallet/?addr=${w.wallet}`)}
                         className="cursor-pointer hover:bg-eclipse-800/40">
                       <td className="cell text-white/30 tabular-nums">{i + 1}</td>
                       <td className="cell text-xs text-white/70 font-mono">{w.wallet}</td>
-                      <td className="cell text-white/50">{w.market}</td>
-                      <td className="cell text-right tabular-nums text-white">{fmtUsd(w.ytBalanceUsd)}</td>
-                      <td className="cell text-right tabular-nums text-white/30">$0</td>
-                      <td className="cell"><span className="text-xs px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-400">Never claimed</span></td>
+                      <td className="cell text-right tabular-nums text-white">{w.currentYtUsd > 0 ? fmtUsd(w.currentYtUsd) : <span className="text-white/15">–</span>}</td>
+                      <td className="cell text-right tabular-nums text-white/60">{fmtUsd(w.totalBoughtUsd)}</td>
+                      <td className="cell text-right tabular-nums text-emerald-400/70">{w.totalClaimedUsd > 0 ? fmtUsd(w.totalClaimedUsd) : <span className="text-white/15">$0</span>}</td>
+                      <td className="cell text-right tabular-nums text-white/40">{w.markets}</td>
+                      <td className="cell">
+                        {!w.hasClaimed ? (
+                          <span className="text-xs px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-400">Never claimed</span>
+                        ) : w.activePositions > 0 ? (
+                          <span className="text-xs px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400">Active</span>
+                        ) : (
+                          <span className="text-xs px-1.5 py-0.5 rounded bg-white/5 text-white/30">Exited</span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
