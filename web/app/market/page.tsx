@@ -76,16 +76,16 @@ function MarketView() {
     if (chartMetric === 'apy') {
       const underlying = (histData.underlyingApyByMarket?.[key] || []).slice(startIdx);
       const impliedSnap = (histData.impliedApyByMarket?.[key] || []).slice(startIdx);
-      const derivedApy = analyticsData?.impliedApyByMarket?.[key] || {};
-      // Fill forward: carry last known derived APY to days without trades
-      let lastDerived = 0;
+      // Use API daily snapshots (accurate spot price) — builds up over time
+      // Fill forward last known snapshot value
+      let lastImplied = 0;
       return slicedDates.map((d: string, i: number) => {
-        if (derivedApy[d]) lastDerived = derivedApy[d] * 100;
         const snapVal = (impliedSnap[i] || 0) * 100;
+        if (snapVal > 0) lastImplied = snapVal;
         return {
           date: d,
           Underlying: (underlying[i] || 0) * 100,
-          Implied: lastDerived || snapVal,
+          Implied: lastImplied,
         };
       });
     }

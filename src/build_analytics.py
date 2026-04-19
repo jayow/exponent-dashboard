@@ -818,7 +818,7 @@ def main():
                 date = datetime.fromtimestamp(bt, tz=timezone.utc).strftime('%Y-%m-%d')
                 pt_prices_by_market[market].append((date, bt, round(pt_price, 6)))
 
-    # Build daily PT price + implied APY per market
+    # Build daily PT price (median per day) + implied APY per market
     daily_pt_price = {}
     daily_implied_apy = {}
     for mk, prices in pt_prices_by_market.items():
@@ -828,14 +828,25 @@ def main():
             if m_data.get('key') == mk:
                 mat_ts = m_data.get('maturityTs', 0)
                 break
+
+        # Group by day and take median
+        day_prices = defaultdict(list)
+        day_times = {}
+        for date, bt, pt_p in prices:
+            day_prices[date].append(pt_p)
+            day_times[date] = bt
+
         daily_pt = {}
         daily_apy = {}
-        for date, bt, pt_p in prices:
-            daily_pt[date] = pt_p
+        for date, pts in sorted(day_prices.items()):
+            pts.sort()
+            median_pt = pts[len(pts) // 2]
+            daily_pt[date] = round(median_pt, 6)
+            bt = day_times[date]
             if mat_ts > bt:
                 years = (mat_ts - bt) / (365.25 * 86400)
                 if years > 0.01:
-                    apy = (1 / pt_p) ** (1 / years) - 1
+                    apy = -math.log(median_pt) / years
                     daily_apy[date] = round(apy, 6)
         if daily_pt:
             daily_pt_price[mk] = daily_pt
