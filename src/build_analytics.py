@@ -658,7 +658,7 @@ def main():
         },
 
         # For Holders tab: enriched user leaderboard (top 100)
-        'enrichedUsers': enriched_users[:500],
+        'enrichedUsers': enriched_users,
 
         # For MarketCards: activity columns per market
         'marketActivity': market_cols,
@@ -691,7 +691,7 @@ def main():
     print(f'\nWrote {OUT} ({size_mb:.1f} MB)')
     print(f'  {len(all_dates)} days, {len(first_seen):,} wallets')
     print(f'  Claims: {output["stats"]["totalClaims"]:,} totaling ${output["stats"]["totalClaimUsd"]:,}')
-    print(f'  Enriched users: {len(enriched_users):,} (top 100 saved)')
+    print(f'  Enriched users: {len(enriched_users):,}')
 
 
 if __name__ == '__main__':

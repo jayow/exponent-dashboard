@@ -38,6 +38,8 @@ export function HolderAnalytics() {
   const [sortAsc, setSortAsc] = useState(false);
   const [range, setRange] = useState<Range>('all');
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(0);
+  const PAGE_SIZE = 50;
 
   useEffect(() => {
     fetch('/analytics.json').then(r => r.json()).then(setAnalytics).catch(() => null);
@@ -89,6 +91,7 @@ export function HolderAnalytics() {
   function onSort(k: SortKey) {
     if (sortKey === k) setSortAsc(v => !v);
     else { setSortKey(k); setSortAsc(k === 'firstDate'); }
+    setPage(0);
   }
   function arrow(k: SortKey) {
     if (sortKey !== k) return null;
@@ -139,7 +142,7 @@ export function HolderAnalytics() {
         {/* Users */}
         {view === 'leaderboard' && (
           <div className="p-3 border-b border-eclipse-700/40">
-            <input value={search} onChange={e => setSearch(e.target.value)}
+            <input value={search} onChange={e => { setSearch(e.target.value); setPage(0); }}
               placeholder="Search wallet address…"
               className="w-full max-w-md bg-eclipse-800/80 border border-eclipse-600/40 focus:border-white/30 focus:outline-none rounded-md px-3 py-2 text-sm placeholder-white/20 font-mono" />
           </div>
@@ -161,12 +164,13 @@ export function HolderAnalytics() {
               </tr>
             </thead>
             <tbody className="divide-y divide-eclipse-700/40 text-[13px]">
-              {sortedUsers.map((u, i) => {
+              {sortedUsers.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map((u, i) => {
+                const rank = page * PAGE_SIZE + i;
                 const daysSince = u.lastDate ? Math.round((Date.now() - new Date(u.lastDate).getTime()) / 86400000) : null;
                 const isActive = daysSince !== null && daysSince <= 30;
                 return (
                   <tr key={u.wallet} onClick={() => router.push(`/wallet/?addr=${u.wallet}`)} className="cursor-pointer hover:bg-eclipse-800/40">
-                    <td className="cell text-white/30 tabular-nums">{i + 1}</td>
+                    <td className="cell text-white/30 tabular-nums">{rank + 1}</td>
                     <td className="cell">
                       <div className="flex items-center gap-2">
                         {u.type === 'protocol' && <span className="text-[9px] px-1 py-0.5 rounded bg-purple-500/10 text-purple-400 shrink-0">POOL</span>}
@@ -194,6 +198,26 @@ export function HolderAnalytics() {
               })}
             </tbody>
           </table>
+        )}
+
+        {/* Pagination */}
+        {view === 'leaderboard' && sortedUsers.length > PAGE_SIZE && (
+          <div className="flex items-center justify-between px-4 py-3 border-t border-eclipse-700/40">
+            <span className="text-xs text-white/30">
+              {search ? `${sortedUsers.length.toLocaleString()} results` : `${sortedUsers.length.toLocaleString()} users`}
+              {' · '}Page {page + 1} of {Math.ceil(sortedUsers.length / PAGE_SIZE)}
+            </span>
+            <div className="flex items-center gap-1">
+              <button onClick={() => setPage(0)} disabled={page === 0}
+                className="text-xs px-2 py-1 rounded border border-white/10 text-white/40 hover:text-white disabled:opacity-20 disabled:cursor-default">First</button>
+              <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}
+                className="text-xs px-2 py-1 rounded border border-white/10 text-white/40 hover:text-white disabled:opacity-20 disabled:cursor-default">Prev</button>
+              <button onClick={() => setPage(p => Math.min(Math.ceil(sortedUsers.length / PAGE_SIZE) - 1, p + 1))} disabled={(page + 1) * PAGE_SIZE >= sortedUsers.length}
+                className="text-xs px-2 py-1 rounded border border-white/10 text-white/40 hover:text-white disabled:opacity-20 disabled:cursor-default">Next</button>
+              <button onClick={() => setPage(Math.ceil(sortedUsers.length / PAGE_SIZE) - 1)} disabled={(page + 1) * PAGE_SIZE >= sortedUsers.length}
+                className="text-xs px-2 py-1 rounded border border-white/10 text-white/40 hover:text-white disabled:opacity-20 disabled:cursor-default">Last</button>
+            </div>
+          </div>
         )}
 
         {/* Holder Growth */}
