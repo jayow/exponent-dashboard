@@ -69,7 +69,7 @@ if os.path.exists(_api_path):
         PRICEABLE_MINTS.add(_am.get('baseTokenMint', ''))
 PRICEABLE_MINTS.discard('')
 
-# Load mint symbols for emission token detection
+# Load mint symbols for token detection
 MINT_SYMBOLS_MAP = {}
 _mint_sym_path = os.path.join(DATA_DIR, 'mint_symbols.json')
 if os.path.exists(_mint_sym_path):
@@ -80,6 +80,40 @@ _token_prices_path = os.path.join(DATA_DIR, 'token_prices.json')
 if os.path.exists(_token_prices_path):
     TOKEN_PRICES = json.load(open(_token_prices_path))
 
+# Extended mint→market mapping for all 88 markets
+ALL_MINT_TO_MARKET = {}
+_all_markets_path = os.path.join(DATA_DIR, 'tvl', 'all_markets.json')
+if os.path.exists(_all_markets_path):
+    for _m in json.load(open(_all_markets_path)):
+        for _f in ('ytMint', 'ptMint', 'syMint'):
+            _mint = _m.get(_f, '')
+            if _mint:
+                ALL_MINT_TO_MARKET[_mint] = _m['key']
+
+# Symbol→market mapping for underlying tokens
+SYMBOL_TO_MARKET = {}
+if os.path.exists(_all_markets_path):
+    for _m in json.load(open(_all_markets_path)):
+        _ticker = _m.get('underlyingTicker', '')
+        if _ticker and _ticker not in SYMBOL_TO_MARKET:
+            SYMBOL_TO_MARKET[_ticker] = _m['key']
+
+
+def resolve_market(event):
+    """Resolve market from event data using multiple fallbacks."""
+    if event.get('market'):
+        return event['market']
+    for mint in event.get('tokenChanges', {}):
+        if mint in ALL_MINT_TO_MARKET:
+            return ALL_MINT_TO_MARKET[mint]
+    for mint in event.get('tokenChanges', {}):
+        sym = MINT_SYMBOLS_MAP.get(mint, '')
+        if sym in SYMBOL_TO_MARKET:
+            return SYMBOL_TO_MARKET[sym]
+        for prefix in ('legacy', 'w', 'e'):
+            if sym.startswith(prefix) and sym[len(prefix):] in SYMBOL_TO_MARKET:
+                return SYMBOL_TO_MARKET[sym[len(prefix):]]
+    return 'unknown'
 
 def normalize_platform(p):
     if not p: return 'Other'
@@ -131,7 +165,7 @@ def main():
         bt = e.get('blockTime')
         if not bt: continue
         date = datetime.fromtimestamp(bt, tz=timezone.utc).strftime('%Y-%m-%d')
-        market = e.get('market', 'unknown')
+        market = resolve_market(e)
         platform = normalize_platform(MARKET_PLATFORM.get(market, ''))
 
         daily_activity_protocol[date][action] += 1
@@ -152,7 +186,7 @@ def main():
         if e.get('action') != 'claimYield': continue
         bt = e.get('blockTime', 0)
         date = datetime.fromtimestamp(bt, tz=timezone.utc).strftime('%Y-%m-%d')
-        market = e.get('market', 'unknown')
+        market = resolve_market(e)
         platform = normalize_platform(MARKET_PLATFORM.get(market, ''))
         signer = e.get('signer', '')
 
@@ -257,7 +291,7 @@ def main():
         if not action: continue
         signer = e.get('signer', '')
         bt = e.get('blockTime', 0)
-        market = e.get('market', 'unknown')
+        market = resolve_market(e)
         up = user_profiles[signer]
         up['txs'] += 1
         if action in up: up[action] += 1
@@ -300,7 +334,7 @@ def main():
     print('Computing market activity columns...')
     market_activity = {}
     for e in events:
-        market = e.get('market')
+        market = resolve_market(e)
         if not market: continue
         action = e.get('action', 'other')
         if market not in market_activity:
