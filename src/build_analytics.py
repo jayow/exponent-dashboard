@@ -11,7 +11,7 @@ Output structured for frontend integration:
 - Market activity columns → MarketCards
 """
 import json, sys, os, glob
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 sys.path.insert(0, os.path.dirname(__file__))
 from config import DATA_DIR
@@ -267,7 +267,10 @@ def main():
         if not action: continue
         signer = e.get('signer', '')
         bt = e.get('blockTime', 0)
-        week = datetime.fromtimestamp(bt, tz=timezone.utc).strftime('%Y-W%W')
+        # Use Monday of the week as the key (YYYY-MM-DD)
+        dt = datetime.fromtimestamp(bt, tz=timezone.utc)
+        monday = dt - timedelta(days=dt.weekday())
+        week = monday.strftime('%Y-%m-%d')
         if signer not in seen:
             weekly_new[week] += 1
             seen.add(signer)

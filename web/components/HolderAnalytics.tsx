@@ -325,9 +325,16 @@ export function HolderAnalytics() {
               <BarChart data={analytics.retention.weeks.map((w, i) => ({ week: w, New: analytics.retention.new[i], Returning: analytics.retention.returning[i] }))}
                 margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
                 <XAxis dataKey="week" tick={{ fill: '#8888aa', fontSize: 10 }} axisLine={false} tickLine={false}
-                  interval={Math.max(1, Math.floor(analytics.retention.weeks.length / 10))} />
+                  interval={Math.max(1, Math.floor(analytics.retention.weeks.length / 10))}
+                  tickFormatter={d => { const dt = new Date(d + 'T00:00:00Z'); return `${dt.toLocaleString('en', { month: 'short' })} ${dt.getUTCDate()}`; }} />
                 <YAxis tick={{ fill: '#8888aa', fontSize: 11 }} axisLine={false} tickLine={false} width={45} />
-                <Tooltip contentStyle={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: 8, fontSize: 13, color: '#fff' }} />
+                <Tooltip
+                  contentStyle={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: 8, fontSize: 13, color: '#fff' }}
+                  labelFormatter={d => {
+                    const mon = new Date(d + 'T00:00:00Z');
+                    const sun = new Date(mon.getTime() + 6 * 86400000);
+                    return `Week of ${mon.toLocaleDateString('en', { month: 'short', day: 'numeric' })} – ${sun.toLocaleDateString('en', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+                  }} />
                 <Bar dataKey="New" fill="#4ade80" fillOpacity={0.8} stackId="1" />
                 <Bar dataKey="Returning" fill="#6b66ff" fillOpacity={0.8} stackId="1" />
               </BarChart>
