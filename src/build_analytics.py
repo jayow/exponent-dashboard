@@ -17,7 +17,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 from config import DATA_DIR
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ENRICHED_DIR = os.path.join(DATA_DIR, 'index', 'enriched')
+# Use final index if available, fall back to enriched
+ENRICHED_DIR = os.path.join(DATA_DIR, 'index', 'final') if os.path.exists(os.path.join(DATA_DIR, 'index', 'final')) else os.path.join(DATA_DIR, 'index', 'enriched')
 OUT = os.path.join(ROOT, 'web', 'public', 'analytics.json')
 
 MARKETS_PATH = os.path.join(DATA_DIR, 'tvl', 'all_markets.json')
@@ -628,6 +629,167 @@ def main():
     }
 
     # ========================================
+    # 10-11. Protocol fee revenue
+    # ========================================
+    print('Computing fee revenue...')
+    daily_fees_protocol = defaultdict(float)
+    fees_by_market = defaultdict(float)
+    fees_by_platform = defaultdict(float)
+    total_gas_usd = 0
+
+    for e in events:
+        bt = e.get('blockTime', 0)
+        date = datetime.fromtimestamp(bt, tz=timezone.utc).strftime('%Y-%m-%d')
+        market = resolve_market(e)
+        platform = normalize_platform(MARKET_PLATFORM.get(market, ''))
+        pk = MARKET_PRICE_KEY.get(market, 'USD')
+        price = get_price(date, pk)
+
+        # Fee transfers (from inner instructions)
+        for fee in (e.get('fees') or []):
+            decimals = MARKET_DECIMALS.get(market, 6)
+            fee_usd = fee['amount'] / (10 ** decimals) * price
+            daily_fees_protocol[date] += fee_usd
+            fees_by_market[market] += fee_usd
+            fees_by_platform[platform] += fee_usd
+
+        # Gas costs
+        gas_lamports = e.get('gasFee', 0)
+        if gas_lamports:
+            sol_price = PRICES.get('SOL', {}).get(date, 88)
+            total_gas_usd += gas_lamports / 1e9 * sol_price
+
+    fee_series = [round(daily_fees_protocol.get(d, 0), 2) for d in all_dates]
+
+    # ========================================
+    # 17. Position duration
+    # ========================================
+    print('Computing position duration...')
+    # Track first buy and last sell/redeem per (wallet, market, type)
+    position_events = defaultdict(lambda: {'open': None, 'close': None, 'type': None})
+    for e in events:
+        action = e.get('action', '')
+        signer = e.get('signer', '')
+        market = resolve_market(e)
+        bt = e.get('blockTime', 0)
+        if not signer or not market: continue
+
+        if action in ('buyYt', 'buyPt', 'addLiq'):
+            pos_type = 'yt' if action == 'buyYt' else 'pt' if action == 'buyPt' else 'lp'
+            key = f'{signer}:{market}:{pos_type}'
+            if not position_events[key]['open'] or bt < position_events[key]['open']:
+                position_events[key]['open'] = bt
+                position_events[key]['type'] = pos_type
+
+        elif action in ('sellYt', 'sellPt', 'removeLiq', 'redeemPt'):
+            pos_type = 'yt' if action == 'sellYt' else 'pt' if action in ('sellPt', 'redeemPt') else 'lp'
+            key = f'{signer}:{market}:{pos_type}'
+            if not position_events[key]['close'] or bt > position_events[key]['close']:
+                position_events[key]['close'] = bt
+
+    durations = {'yt': [], 'pt': [], 'lp': []}
+    for key, pos in position_events.items():
+        if pos['open'] and pos['close'] and pos['close'] > pos['open']:
+            days = (pos['close'] - pos['open']) / 86400
+            if days > 0 and days < 1000:
+                durations[pos['type'] or 'yt'].append(round(days, 1))
+
+    duration_stats = {}
+    for pos_type, d_list in durations.items():
+        if d_list:
+            d_list.sort()
+            duration_stats[pos_type] = {
+                'count': len(d_list),
+                'avgDays': round(sum(d_list) / len(d_list), 1),
+                'medianDays': d_list[len(d_list) // 2],
+                'minDays': d_list[0],
+                'maxDays': d_list[-1],
+            }
+
+    # ========================================
+    # 19. Strip/merge activity
+    # ========================================
+    print('Computing strip/merge activity...')
+    daily_strips = defaultdict(int)
+    daily_merges = defaultdict(int)
+    for e in events:
+        action = e.get('action', '')
+        bt = e.get('blockTime', 0)
+        date = datetime.fromtimestamp(bt, tz=timezone.utc).strftime('%Y-%m-%d')
+        if action == 'strip': daily_strips[date] += 1
+        elif action == 'redeemPt': daily_merges[date] += 1
+
+    # ========================================
+    # 20. Redemption speed post-maturity
+    # ========================================
+    print('Computing redemption speed...')
+    redemption_speed = {}
+    for mk, meta in MARKET_META.items():
+        if meta.get('status') != 'expired': continue
+        mat_ts = meta.get('maturityTs', 0)
+        if not mat_ts: continue
+        redeems_1d = 0
+        redeems_7d = 0
+        redeems_30d = 0
+        redeems_total = 0
+        for e in events:
+            if e.get('action') != 'redeemPt': continue
+            if resolve_market(e) != mk: continue
+            bt = e.get('blockTime', 0)
+            if bt < mat_ts: continue
+            days_after = (bt - mat_ts) / 86400
+            redeems_total += 1
+            if days_after <= 1: redeems_1d += 1
+            if days_after <= 7: redeems_7d += 1
+            if days_after <= 30: redeems_30d += 1
+        if redeems_total > 0:
+            redemption_speed[mk] = {
+                'total': redeems_total,
+                'within1d': redeems_1d,
+                'within7d': redeems_7d,
+                'within30d': redeems_30d,
+                'pct1d': round(redeems_1d / redeems_total * 100, 1),
+                'pct7d': round(redeems_7d / redeems_total * 100, 1),
+                'pct30d': round(redeems_30d / redeems_total * 100, 1),
+            }
+
+    # ========================================
+    # 25. Claim efficiency (gas cost vs claim value)
+    # ========================================
+    print('Computing claim efficiency...')
+    claim_efficiency = {'profitable': 0, 'unprofitable': 0, 'totalGasUsd': 0, 'totalClaimUsd': 0}
+    for e in events:
+        if e.get('action') != 'claimYield': continue
+        bt = e.get('blockTime', 0)
+        date = datetime.fromtimestamp(bt, tz=timezone.utc).strftime('%Y-%m-%d')
+        gas_lamports = e.get('gasFee', 0)
+        sol_price = PRICES.get('SOL', {}).get(date, 88)
+        gas_usd = gas_lamports / 1e9 * sol_price
+
+        # Estimate claim value
+        market = resolve_market(e)
+        pk = MARKET_PRICE_KEY.get(market, 'USD')
+        price = get_price(date, pk)
+        claim_val = 0
+        for mint, delta in e.get('tokenChanges', {}).items():
+            if delta > 0:
+                sym = MINT_SYMBOLS_MAP.get(mint, '')
+                if mint in TOKEN_PRICES:
+                    claim_val += delta * TOKEN_PRICES[mint]
+                elif sym.startswith(('SY-', 'PT-', 'YT-')) or mint in PRICEABLE_MINTS:
+                    claim_val += delta * price
+
+        claim_efficiency['totalGasUsd'] += gas_usd
+        claim_efficiency['totalClaimUsd'] += claim_val
+        if claim_val > gas_usd:
+            claim_efficiency['profitable'] += 1
+        else:
+            claim_efficiency['unprofitable'] += 1
+
+    claim_efficiency['totalGasUsd'] = round(claim_efficiency['totalGasUsd'], 2)
+    claim_efficiency['totalClaimUsd'] = round(claim_efficiency['totalClaimUsd'], 2)
+
+    # ========================================
     # Build output
     # ========================================
     print('Building output...')
@@ -699,6 +861,22 @@ def main():
 
         # Unclaimed yields
         'unclaimed': unclaimed,
+
+        # Fee revenue
+        'dailyFees': fee_series,
+        'feesByMarket': {k: round(v, 2) for k, v in sorted(fees_by_market.items(), key=lambda x: -x[1]) if v > 0},
+        'feesByPlatform': {k: round(v, 2) for k, v in sorted(fees_by_platform.items(), key=lambda x: -x[1]) if v > 0},
+        'totalFeesUsd': round(sum(fee_series), 2),
+        'totalGasUsd': round(total_gas_usd, 2),
+
+        # Position analytics
+        'positionDuration': duration_stats,
+        'redemptionSpeed': redemption_speed,
+        'claimEfficiency': claim_efficiency,
+
+        # Strip/merge daily
+        'dailyStrips': [daily_strips.get(d, 0) for d in all_dates],
+        'dailyMerges': [daily_merges.get(d, 0) for d in all_dates],
 
         # Whale events (top 100 by USD)
         'whaleEvents': whale_events,

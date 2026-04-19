@@ -25,7 +25,7 @@ OUT_DIR = os.path.join(DATA_DIR, 'index', 'final')
 os.makedirs(OUT_DIR, exist_ok=True)
 
 EXPONENT_PROGRAM = 'ExponentnaRg3CQbW6dqQNZKXp7gtZ9DGMp1cwC4HAS7'
-WORKERS = 12
+WORKERS = 24
 BATCH_SAVE = 200
 RATE_RE = re.compile(r'sy exchange rate:\s*(\d+)')
 
