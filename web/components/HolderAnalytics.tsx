@@ -25,7 +25,7 @@ type TvlHistory = {
   holderConcentration?: Record<string, Concentration>;
 };
 
-type View = 'leaderboard' | 'growth' | 'retention' | 'concentration' | 'whales' | 'tradeSizes';
+type View = 'leaderboard' | 'cohorts' | 'growth' | 'retention' | 'concentration' | 'whales' | 'tradeSizes';
 type SortKey = 'holdingUsd' | 'claimUsd' | 'unclaimedUsd' | 'txs' | 'markets' | 'firstDate';
 type Range = '30d' | '90d' | '1y' | 'all';
 
@@ -114,6 +114,7 @@ export function HolderAnalytics() {
         <div className="flex items-center gap-1">
           {([
             { key: 'leaderboard', label: 'Users' },
+            { key: 'cohorts', label: 'Cohorts' },
             { key: 'whales', label: 'Whale Activity' },
             { key: 'tradeSizes', label: 'Trade Sizes' },
             { key: 'growth', label: 'Growth' },
@@ -219,6 +220,82 @@ export function HolderAnalytics() {
             </div>
           </div>
         )}
+
+        {/* Cohorts */}
+        {view === 'cohorts' && (() => {
+          const users = analytics?.enrichedUsers || [];
+          const activeUsers = users.filter(u => u.holdingUsd > 0);
+          const cohorts = [
+            { label: 'Whale', min: 100000, color: '#6b66ff' },
+            { label: 'Large', min: 10000, color: '#38bdf8' },
+            { label: 'Medium', min: 1000, color: '#4ade80' },
+            { label: 'Small', min: 100, color: '#ffb74d' },
+            { label: 'Micro', min: 0, color: '#f87171' },
+          ];
+          const cohortData = cohorts.map((c, idx) => {
+            const max = idx === 0 ? Infinity : cohorts[idx - 1].min;
+            const members = activeUsers.filter(u => u.holdingUsd >= c.min && u.holdingUsd < max);
+            const totalHoldings = members.reduce((s, u) => s + u.holdingUsd, 0);
+            const totalClaimed = members.reduce((s, u) => s + u.claimUsd, 0);
+            const avgTxs = members.length > 0 ? Math.round(members.reduce((s, u) => s + u.txs, 0) / members.length) : 0;
+            const avgMarkets = members.length > 0 ? (members.reduce((s, u) => s + u.markets, 0) / members.length).toFixed(1) : '0';
+            const activePct = members.length > 0
+              ? Math.round(members.filter(u => u.lastDate && (Date.now() - new Date(u.lastDate).getTime()) / 86400000 <= 30).length / members.length * 100)
+              : 0;
+            return { ...c, max, count: members.length, totalHoldings, totalClaimed, avgTxs, avgMarkets, activePct };
+          });
+          const totalActive = activeUsers.length;
+          const totalHoldings = activeUsers.reduce((s, u) => s + u.holdingUsd, 0);
+
+          return (
+            <div className="p-4">
+              <div className="text-xs text-white/40 mb-4">
+                {totalActive.toLocaleString()} users with active positions · {fmtUsd(totalHoldings)} total
+              </div>
+              <table className="w-full text-sm">
+                <thead className="text-xs uppercase tracking-wider text-white/40">
+                  <tr>
+                    <th className="cell text-left">Cohort</th>
+                    <th className="cell text-left">Range</th>
+                    <th className="cell text-right">Users</th>
+                    <th className="cell text-right">% of Users</th>
+                    <th className="cell text-right">Total Holdings</th>
+                    <th className="cell text-right">% of TVL</th>
+                    <th className="cell text-right">Total Claimed</th>
+                    <th className="cell text-right">Avg Txns</th>
+                    <th className="cell text-right">Avg Markets</th>
+                    <th className="cell text-right">Active (30d)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-eclipse-700/40 text-[13px]">
+                  {cohortData.map(c => (
+                    <tr key={c.label}>
+                      <td className="cell font-semibold" style={{ color: c.color }}>{c.label}</td>
+                      <td className="cell text-white/40">
+                        {c.max === Infinity ? `>$${(c.min/1000).toFixed(0)}K` : `$${c.min >= 1000 ? `${(c.min/1000).toFixed(0)}K` : c.min} – $${(c.max/1000).toFixed(0)}K`}
+                      </td>
+                      <td className="cell text-right tabular-nums text-white">{c.count.toLocaleString()}</td>
+                      <td className="cell text-right tabular-nums text-white/50">{totalActive > 0 ? (c.count / totalActive * 100).toFixed(1) : 0}%</td>
+                      <td className="cell text-right tabular-nums text-emerald-400/80">{fmtUsd(c.totalHoldings)}</td>
+                      <td className="cell text-right tabular-nums text-white/50">{totalHoldings > 0 ? (c.totalHoldings / totalHoldings * 100).toFixed(1) : 0}%</td>
+                      <td className="cell text-right tabular-nums text-yellow-400/70">{fmtUsd(c.totalClaimed)}</td>
+                      <td className="cell text-right tabular-nums text-white/50">{c.avgTxs}</td>
+                      <td className="cell text-right tabular-nums text-white/50">{c.avgMarkets}</td>
+                      <td className="cell text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <div className="w-12 h-1.5 bg-white/10 rounded-full overflow-hidden">
+                            <div className="h-full bg-emerald-400 rounded-full" style={{ width: `${c.activePct}%` }} />
+                          </div>
+                          <span className="tabular-nums text-white/50">{c.activePct}%</span>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        })()}
 
         {/* Holder Growth */}
         {view === 'growth' && (
