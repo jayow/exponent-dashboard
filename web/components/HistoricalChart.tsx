@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import {
-  ComposedChart, BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
+  ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
 } from 'recharts';
 
 type FlowData = { inflow: number[]; outflow: number[] };
@@ -20,8 +20,7 @@ type TvlHistory = {
   marketMeta?: Record<string, { status: string; platform?: string }>;
 };
 
-type Metric = 'tvl' | 'flow' | 'volume' | 'activity' | 'claims' | 'apy';
-type ApyView = 'current' | 'history';
+type Metric = 'tvl' | 'flow' | 'volume' | 'activity' | 'claims';
 type View = 'protocol' | 'platform' | 'market';
 type Range = '30d' | '90d' | '1y' | 'all';
 
@@ -65,7 +64,6 @@ export function HistoricalChart() {
   const [range, setRange] = useState<Range>('all');
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [hideExpired, setHideExpired] = useState(false);
-  const [apyView, setApyView] = useState<ApyView>('current');
 
   useEffect(() => {
     fetch('/tvl-history.json').then(r => r.json()).then(setData).catch(() => null);
@@ -171,66 +169,6 @@ export function HistoricalChart() {
       });
       colors['Cumulative'] = '#a78bfa';
       return { chartData: rows, series: keys, seriesColors: colors };
-    }
-
-    // APY view
-    if (metric === 'apy') {
-      const impliedData = data.impliedApyByMarket || {};
-      const underlyingData = data.underlyingApyByMarket || {};
-      const activeKeys = Array.from(activeMarketKeys);
-
-      if (apyView === 'current') {
-        // Snapshot: horizontal bar chart comparing implied vs underlying
-        const entries = activeKeys
-          .map(k => {
-            const implied = (impliedData[k] || []).slice(-1)[0] || 0;
-            const underlying = (underlyingData[k] || []).slice(-1)[0] || 0;
-            return { key: k, implied, underlying };
-          })
-          .filter(e => e.implied > 0 || e.underlying > 0)
-          .sort((a, b) => b.implied - a.implied);
-
-        const keys = entries.map(e => e.key);
-        const colors: Record<string, string> = {};
-        keys.forEach((k, i) => { colors[k] = COLORS[i % COLORS.length]; });
-
-        const rows = entries.map(e => ({ market: e.key, Implied: round2(e.implied * 100), Underlying: round2(e.underlying * 100) }));
-        return { chartData: rows, series: keys, seriesColors: colors };
-      } else {
-        // Historical: line chart of underlying APY over time for active markets
-        const entries = activeKeys
-          .map(k => {
-            const uVals = (underlyingData[k] || []).slice(startIdx);
-            const iVals = (impliedData[k] || []).slice(startIdx);
-            const hasData = uVals.some(x => x > 0) || iVals.some(x => x > 0);
-            return { key: k, uVals, iVals, hasData };
-          })
-          .filter(e => e.hasData)
-          .sort((a, b) => {
-            const aLast = a.uVals.findLast(x => x > 0) || a.iVals.findLast(x => x > 0) || 0;
-            const bLast = b.uVals.findLast(x => x > 0) || b.iVals.findLast(x => x > 0) || 0;
-            return bLast - aLast;
-          });
-
-        const keys: string[] = [];
-        const colors: Record<string, string> = {};
-        entries.forEach((e, i) => {
-          const color = COLORS[i % COLORS.length];
-          keys.push(e.key);
-          colors[e.key] = color;
-        });
-
-        const rows = dates.map((d, i) => {
-          const row: Record<string, any> = { date: d };
-          entries.forEach(e => {
-            const uVal = (e.uVals[i] || 0) * 100;
-            const iVal = (e.iVals[i] || 0) * 100;
-            row[e.key] = hidden.has(e.key) ? 0 : (iVal > 0 ? iVal : uVal);
-          });
-          return row;
-        });
-        return { chartData: rows, series: keys, seriesColors: colors };
-      }
     }
 
     // Protocol view
@@ -368,7 +306,6 @@ export function HistoricalChart() {
   if (!data) return <div className="text-white/30 text-sm py-4">Loading…</div>;
 
   const fmtAxis = (v: number) => {
-    if (metric === 'apy') return `${v.toFixed(0)}%`;
     if (metric === 'activity') return `${v >= 1000 ? `${(v/1000).toFixed(0)}K` : v}`;
     const abs = Math.abs(v);
     if (abs >= 1e9) return `$${(v / 1e9).toFixed(1)}B`;
@@ -390,27 +327,16 @@ export function HistoricalChart() {
       <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1">
-            {(['tvl', 'flow', 'volume', 'activity', 'claims', 'apy'] as Metric[]).map(m => (
+            {(['tvl', 'flow', 'volume', 'activity', 'claims'] as Metric[]).map(m => (
               <button key={m} onClick={() => { setMetric(m); setHidden(new Set()); }}
                 className={`text-xs px-3 py-1.5 rounded-lg border transition ${
                   metric === m ? 'border-white/30 bg-white/10 text-white' : 'border-white/10 text-white/40 hover:text-white'
                 }`}>
-                {m === 'tvl' ? 'TVL' : m === 'flow' ? 'Inflow / Outflow' : m === 'volume' ? 'Volume' : m === 'activity' ? 'Activity' : m === 'claims' ? 'Claims' : 'APY'}
+                {m === 'tvl' ? 'TVL' : m === 'flow' ? 'Inflow / Outflow' : m === 'volume' ? 'Volume' : m === 'activity' ? 'Activity' : 'Claims'}
               </button>
             ))}
           </div>
-          {metric === 'apy' ? (
-            <div className="flex items-center gap-1">
-              {(['current', 'history'] as ApyView[]).map(v => (
-                <button key={v} onClick={() => { setApyView(v); setHidden(new Set()); }}
-                  className={`text-xs px-2.5 py-1 rounded-md transition ${
-                    apyView === v ? 'bg-white/10 text-white' : 'text-white/30 hover:text-white/60'
-                  }`}>
-                  {v === 'current' ? 'Current' : 'Historical'}
-                </button>
-              ))}
-            </div>
-          ) : metric === 'activity' && view === 'protocol' ? null : (
+          {metric === 'activity' && view === 'protocol' ? null : (
             <div className="flex items-center gap-1">
               {(['protocol', 'platform', 'market'] as View[]).map(v => (
                 <button key={v} onClick={() => { setView(v); setHidden(new Set()); }}
@@ -423,7 +349,7 @@ export function HistoricalChart() {
             </div>
           )}
         </div>
-        {(metric !== 'apy' || apyView === 'history') && (
+        {(
           <div className="flex items-center gap-2">
             {view === 'market' && (
               <button onClick={() => { setHideExpired(v => !v); setHidden(new Set()); }}
@@ -449,55 +375,7 @@ export function HistoricalChart() {
 
       <div className="rounded-2xl border border-eclipse-700/60 bg-eclipse-900/40 backdrop-blur p-4">
         <ResponsiveContainer width="100%" height={340}>
-          {metric === 'apy' && apyView === 'current' ? (
-            <BarChart data={chartData} layout="vertical" margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
-              <XAxis type="number" tick={{ fill: '#8888aa', fontSize: 11 }} axisLine={false} tickLine={false}
-                tickFormatter={v => `${v}%`} />
-              <YAxis type="category" dataKey="market" width={130}
-                tick={{ fill: '#c8caff', fontSize: 12 }} axisLine={false} tickLine={false} />
-              <Tooltip
-                contentStyle={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: 8, fontSize: 13, color: '#fff' }}
-                formatter={(v: any, name: any) => [`${Number(v).toFixed(2)}%`, name]}
-              />
-              <Bar dataKey="Implied" fill="#6b66ff" fillOpacity={0.85} barSize={14} radius={[0, 4, 4, 0]} />
-              <Bar dataKey="Underlying" fill="#4ade80" fillOpacity={0.6} barSize={14} radius={[0, 4, 4, 0]} />
-            </BarChart>
-          ) : metric === 'apy' && apyView === 'history' ? (
-            <LineChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
-              <XAxis dataKey="date" tick={{ fill: '#8888aa', fontSize: 11 }} axisLine={false} tickLine={false}
-                tickFormatter={fmtTick} interval={interval} />
-              <YAxis tick={{ fill: '#8888aa', fontSize: 11 }} axisLine={false} tickLine={false}
-                tickFormatter={v => `${v.toFixed(0)}%`} width={55} />
-              <Tooltip
-                content={({ active, payload, label }) => {
-                  if (!active || !payload?.length) return null;
-                  const dt = new Date(label + 'T00:00:00Z');
-                  const dateStr = dt.toLocaleDateString('en', { year: 'numeric', month: 'short', day: 'numeric' });
-                  const items = payload.filter((p: any) => Number(p.value) > 0).sort((a: any, b: any) => Number(b.value) - Number(a.value));
-                  if (!items.length) return null;
-                  return (
-                    <div style={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: 8, padding: '8px 12px', fontSize: 13 }}>
-                      <div style={{ color: '#fff', fontWeight: 600, marginBottom: 4 }}>{dateStr}</div>
-                      {items.map((p: any) => (
-                        <div key={p.name} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, color: '#ccc' }}>
-                          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                            <span style={{ width: 8, height: 8, borderRadius: '50%', background: p.color || seriesColors[p.name], display: 'inline-block' }} />
-                            {p.name}
-                          </span>
-                          <span style={{ fontVariantNumeric: 'tabular-nums' }}>{Number(p.value).toFixed(2)}%</span>
-                        </div>
-                      ))}
-                    </div>
-                  );
-                }}
-              />
-              {series.map((s) => (
-                <Line key={s} type="monotone" dataKey={s}
-                  stroke={hidden.has(s) ? 'transparent' : seriesColors[s]}
-                  strokeWidth={2} dot={false} connectNulls />
-              ))}
-            </LineChart>
-          ) : (
+          {(
             <ComposedChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
               {...(isFlowProtocol || isFlowBreakdown ? { stackOffset: 'sign' as const } : {})}>
               <XAxis dataKey="date" tick={{ fill: '#8888aa', fontSize: 11 }} axisLine={false} tickLine={false}
@@ -568,7 +446,7 @@ export function HistoricalChart() {
                             <span style={{ width: 8, height: 8, borderRadius: '50%', background: p.color || seriesColors[p.name] || '#6b66ff', display: 'inline-block' }} />
                             {p.name}
                           </span>
-                          <span style={{ fontVariantNumeric: 'tabular-nums' }}>{metric === 'apy' ? `${Number(p.value).toFixed(2)}%` : metric === 'activity' ? Number(p.value).toLocaleString() : fmtVal(Number(p.value))}</span>
+                          <span style={{ fontVariantNumeric: 'tabular-nums' }}>{metric === 'activity' ? Number(p.value).toLocaleString() : fmtVal(Number(p.value))}</span>
                         </div>
                       ))}
                     </div>
@@ -651,28 +529,6 @@ export function HistoricalChart() {
           )}
           {metric === 'claims' && (
             <span className="flex items-center gap-1 text-[11px]"><span className="w-2.5 h-2.5 rounded-full" style={{ background: '#a78bfa' }} /> Cumulative</span>
-          )}
-          {metric === 'apy' && apyView === 'current' && (
-            <>
-              <span className="flex items-center gap-1 text-[11px]"><span className="w-2.5 h-2.5 rounded" style={{ background: '#6b66ff' }} /> Implied</span>
-              <span className="flex items-center gap-1 text-[11px]"><span className="w-2.5 h-2.5 rounded" style={{ background: '#4ade80' }} /> Underlying</span>
-            </>
-          )}
-          {metric === 'apy' && apyView === 'history' && (
-            <>
-              <button
-                onClick={() => { if (hidden.size === series.length) setHidden(new Set()); else setHidden(new Set(series)); }}
-                className="text-[10px] px-2 py-0.5 rounded border border-white/10 text-white/30 hover:text-white/60 transition mr-1">
-                {hidden.size === series.length ? 'Show All' : 'Hide All'}
-              </button>
-              {series.map(s => (
-                <button key={s} onClick={() => toggleSeries(s)}
-                  className={`flex items-center gap-1 text-[11px] transition cursor-pointer ${hidden.has(s) ? 'opacity-30' : 'opacity-100 hover:opacity-80'}`}>
-                  <span className="w-2.5 h-2.5 rounded-full" style={{ background: seriesColors[s] }} />
-                  <span className="text-white/50">{s}</span>
-                </button>
-              ))}
-            </>
           )}
           {metric === 'tvl' && view !== 'protocol' && (
             <>
