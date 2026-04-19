@@ -153,14 +153,14 @@ export function HolderAnalytics() {
               <tr>
                 <th className="cell">#</th>
                 <th className="cell text-left">Wallet</th>
-                <th className="th-sortable cell text-right" onClick={() => onSort('holdingUsd')}>Holdings{arrow('holdingUsd')}</th>
-                <th className="th-sortable cell text-right" onClick={() => onSort('claimUsd')}>Claimed{arrow('claimUsd')}</th>
-                <th className="th-sortable cell text-right" onClick={() => onSort('unclaimedUsd')}>Unclaimed{arrow('unclaimedUsd')}</th>
-                <th className="th-sortable cell text-right" onClick={() => onSort('txs')}>Txns{arrow('txs')}</th>
-                <th className="th-sortable cell text-right" onClick={() => onSort('markets')}>Markets{arrow('markets')}</th>
-                <th className="th-sortable cell text-right" onClick={() => onSort('firstDate')}>First{arrow('firstDate')}</th>
-                <th className="cell text-right">Last</th>
-                <th className="cell">Status</th>
+                <th className="th-sortable cell text-right" onClick={() => onSort('holdingUsd')} title="Current value of all PT/YT/LP positions in active markets">Active Holdings{arrow('holdingUsd')}</th>
+                <th className="th-sortable cell text-right" onClick={() => onSort('claimUsd')} title="Total yield claimed across all markets (active + expired)">Claimed{arrow('claimUsd')}</th>
+                <th className="th-sortable cell text-right" onClick={() => onSort('unclaimedUsd')} title="YT positions where yield has never been collected">Unclaimed{arrow('unclaimedUsd')}</th>
+                <th className="th-sortable cell text-right" onClick={() => onSort('txs')} title="Total on-chain transactions with Exponent">Txns{arrow('txs')}</th>
+                <th className="th-sortable cell text-right" onClick={() => onSort('markets')} title="Number of distinct markets participated in (active + expired)">Markets{arrow('markets')}</th>
+                <th className="th-sortable cell text-right" onClick={() => onSort('firstDate')} title="Date of first Exponent transaction">First{arrow('firstDate')}</th>
+                <th className="cell text-right" title="Date of most recent Exponent transaction">Last</th>
+                <th className="cell" title="Active = last txn within 30 days">Status</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-eclipse-700/40 text-[13px]">
