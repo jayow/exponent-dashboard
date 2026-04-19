@@ -156,8 +156,22 @@ def main():
     print('Computing daily activity...')
     action_types = ['buyYt', 'sellYt', 'buyPt', 'sellPt', 'addLiq', 'removeLiq', 'claimYield', 'redeemPt', 'strip']
     daily_activity_protocol = defaultdict(lambda: defaultdict(int))
+    daily_activity_usd_protocol = defaultdict(lambda: defaultdict(float))
     daily_activity_platform = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
     daily_activity_market = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
+
+    _sol_prices = PRICES.get('SOL', {})
+    _sym_price_map = {
+        'SOL': lambda d: _sol_prices.get(d, 88), 'USDC': lambda d: 1, 'USDT': lambda d: 1,
+        'USD': lambda d: 1, 'USX': lambda d: 1, 'eUSX': lambda d: 1, 'ONyc': lambda d: 1,
+        'USDC+': lambda d: 1, 'sHYUSD': lambda d: 1, 'legacyUSD*': lambda d: 1,
+        'kySOL': lambda d: _sol_prices.get(d, 88) * 1.28,
+        'BulkSOL': lambda d: _sol_prices.get(d, 88) * 1.08,
+        'hyloSOL': lambda d: _sol_prices.get(d, 88) * 1.05,
+        'fragSOL': lambda d: _sol_prices.get(d, 88) * 1.11,
+        'dSOL': lambda d: _sol_prices.get(d, 88) * 1.03,
+        'MLP': lambda d: _sol_prices.get(d, 88),
+    }
 
     for e in events:
         action = e.get('action')
@@ -171,6 +185,22 @@ def main():
         daily_activity_protocol[date][action] += 1
         daily_activity_platform[platform][date][action] += 1
         daily_activity_market[market][date][action] += 1
+
+        # Estimate USD volume for this event
+        tc = e.get('tokenChanges', {})
+        pk = MARKET_PRICE_KEY.get(market, 'USD')
+        price = get_price(date, pk)
+        usd = 0
+        for mint, delta in tc.items():
+            if delta < 0:
+                sym = MINT_SYMBOLS_MAP.get(mint, '')
+                if sym in _sym_price_map:
+                    usd += abs(delta) * _sym_price_map[sym](date)
+                elif mint in TOKEN_PRICES:
+                    usd += abs(delta) * TOKEN_PRICES[mint]
+                elif sym.startswith(('SY-', 'PT-', 'YT-')) or mint in PRICEABLE_MINTS:
+                    usd += abs(delta) * price
+        daily_activity_usd_protocol[date][action] += usd
 
     # ========================================
     # 2. Daily claims with USD amounts
@@ -645,6 +675,7 @@ def main():
 
         # For HistoricalChart: Activity metric
         'activityProtocol': activity_protocol,
+        'activityUsdProtocol': {a: [round(daily_activity_usd_protocol.get(d, {}).get(a, 0)) for d in all_dates] for a in action_types},
         'activityByPlatform': activity_by_platform,
 
         # For HistoricalChart: Claims metric

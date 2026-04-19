@@ -21,6 +21,7 @@ type TvlHistory = {
 };
 
 type Metric = 'tvl' | 'flow' | 'volume' | 'activity' | 'claims';
+type ActivityMode = 'count' | 'usd';
 type View = 'protocol' | 'platform' | 'market';
 type Range = '30d' | '90d' | '1y' | 'all';
 
@@ -64,6 +65,7 @@ export function HistoricalChart() {
   const [range, setRange] = useState<Range>('all');
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [hideExpired, setHideExpired] = useState(false);
+  const [activityMode, setActivityMode] = useState<ActivityMode>('usd');
 
   useEffect(() => {
     fetch('/tvl-history.json').then(r => r.json()).then(setData).catch(() => null);
@@ -96,7 +98,7 @@ export function HistoricalChart() {
       };
 
       if (view === 'protocol') {
-        const actData = analyticsData.activityProtocol || {};
+        const actData = activityMode === 'usd' ? (analyticsData.activityUsdProtocol || analyticsData.activityProtocol || {}) : (analyticsData.activityProtocol || {});
         const aDates = analyticsData.dates || [];
         const aStartIdx = Math.max(0, aDates.length - cutoff);
         const rows = aDates.slice(aStartIdx).map((d: string, i: number) => {
@@ -301,13 +303,18 @@ export function HistoricalChart() {
     }
 
     return { chartData: rows, series: keys, seriesColors: colors };
-  }, [data, metric, view, range, hidden, hideExpired, activeMarketKeys]);
+  }, [data, metric, view, range, hidden, hideExpired, activeMarketKeys, activityMode]);
 
   if (!data) return <div className="text-white/30 text-sm py-4">Loading…</div>;
 
   const fmtAxis = (v: number) => {
-    if (metric === 'activity') return `${v >= 1000 ? `${(v/1000).toFixed(0)}K` : v}`;
     const abs = Math.abs(v);
+    if (metric === 'activity' && activityMode === 'count') return `${abs >= 1000 ? `${(v/1000).toFixed(0)}K` : v}`;
+    if (metric === 'activity' && activityMode === 'usd') {
+      if (abs >= 1e6) return `$${(v / 1e6).toFixed(0)}M`;
+      if (abs >= 1e3) return `$${(v / 1e3).toFixed(0)}K`;
+      return `$${v}`;
+    }
     if (abs >= 1e9) return `$${(v / 1e9).toFixed(1)}B`;
     if (abs >= 1e6) return `$${(v / 1e6).toFixed(0)}M`;
     if (abs >= 1e3) return `$${(v / 1e3).toFixed(0)}K`;
@@ -336,7 +343,16 @@ export function HistoricalChart() {
               </button>
             ))}
           </div>
-          {metric === 'activity' && view === 'protocol' ? null : (
+          {metric === 'activity' && view === 'protocol' ? (
+            <div className="flex items-center gap-1">
+              {(['usd', 'count'] as ActivityMode[]).map(m => (
+                <button key={m} onClick={() => setActivityMode(m)}
+                  className={`text-xs px-2.5 py-1 rounded-md transition ${activityMode === m ? 'bg-white/10 text-white' : 'text-white/30 hover:text-white/60'}`}>
+                  {m === 'usd' ? 'USD' : 'Count'}
+                </button>
+              ))}
+            </div>
+          ) : metric === 'activity' ? null : (
             <div className="flex items-center gap-1">
               {(['protocol', 'platform', 'market'] as View[]).map(v => (
                 <button key={v} onClick={() => { setView(v); setHidden(new Set()); }}
@@ -446,7 +462,7 @@ export function HistoricalChart() {
                             <span style={{ width: 8, height: 8, borderRadius: '50%', background: p.color || seriesColors[p.name] || '#6b66ff', display: 'inline-block' }} />
                             {p.name}
                           </span>
-                          <span style={{ fontVariantNumeric: 'tabular-nums' }}>{metric === 'activity' ? Number(p.value).toLocaleString() : fmtVal(Number(p.value))}</span>
+                          <span style={{ fontVariantNumeric: 'tabular-nums' }}>{metric === 'activity' && activityMode === 'count' ? Number(p.value).toLocaleString() : fmtVal(Number(p.value))}</span>
                         </div>
                       ))}
                     </div>
