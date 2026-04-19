@@ -310,12 +310,30 @@ def main():
             for h in snap.get('top', []):
                 wallet_holdings[h.get('owner', '')] += h.get('usd', 0)
 
+    # Per-wallet: current YT positions (for unclaimed)
+    wallet_yt_usd = defaultdict(float)
+    wallet_yt_markets = defaultdict(list)
+    if os.path.exists(holders_path):
+        for snap_key, snap in json.load(open(holders_path)).items():
+            if ':yt' not in snap_key: continue
+            market = snap_key.replace(':yt', '')
+            for h in snap.get('top', []):
+                wallet_yt_usd[h['owner']] += h.get('usd', 0)
+                if h.get('usd', 0) > 0:
+                    wallet_yt_markets[h['owner']].append(market)
+
     enriched_users = []
     for w, up in user_profiles.items():
+        has_claimed = up['claimYield'] > 0
+        yt_usd = wallet_yt_usd.get(w, 0)
+        unclaimed_usd = yt_usd if not has_claimed and yt_usd > 0 else 0
+
         enriched_users.append({
             'wallet': w,
             'holdingUsd': round(wallet_holdings.get(w, 0), 2),
             'claimUsd': round(up['claimUsd'], 2),
+            'unclaimedUsd': round(unclaimed_usd, 2),
+            'unclaimedMarkets': wallet_yt_markets.get(w, []) if not has_claimed else [],
             'txs': up['txs'],
             'buyYt': up['buyYt'], 'sellYt': up['sellYt'],
             'buyPt': up['buyPt'], 'sellPt': up['sellPt'],
@@ -640,7 +658,7 @@ def main():
         },
 
         # For Holders tab: enriched user leaderboard (top 100)
-        'enrichedUsers': enriched_users[:100],
+        'enrichedUsers': enriched_users[:500],
 
         # For MarketCards: activity columns per market
         'marketActivity': market_cols,

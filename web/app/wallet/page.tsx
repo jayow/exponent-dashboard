@@ -38,12 +38,20 @@ function WalletView() {
   const [sortKey, setSortKey] = useState<SortKey>('date');
   const [asc, setAsc] = useState(false);
 
+  const [userInfo, setUserInfo] = useState<any>(null);
+
   useEffect(() => {
     if (!addr) { setEvents([]); return; }
     setEvents(null);
     fetch(`/events/${addr}.json`)
       .then(r => r.status === 404 ? [] : r.json())
       .then(setEvents).catch(() => setEvents([]));
+    fetch('/analytics.json')
+      .then(r => r.json())
+      .then(d => {
+        const u = d.enrichedUsers?.find((u: any) => u.wallet === addr);
+        if (u) setUserInfo(u);
+      }).catch(() => null);
   }, [addr]);
 
   const actionCounts = useMemo(() => {
@@ -88,10 +96,25 @@ function WalletView() {
       <div className="mt-6 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 text-sm">
         <Stat label="Total Txns" value={`${totalEvents}`} />
         <Stat label="Markets" value={`${markets.size}`} />
+        {userInfo?.holdingUsd > 0 && <Stat label="Holdings" value={fmtUsdVal(userInfo.holdingUsd)} />}
+        {userInfo?.claimUsd > 0 && <Stat label="Claimed" value={fmtUsdVal(userInfo.claimUsd)} />}
+        {userInfo?.unclaimedUsd > 0 && <Stat label="Unclaimed" value={fmtUsdVal(userInfo.unclaimedUsd)} />}
         {ALL_FILTERS.map(f => actionCounts[f] ? (
           <Stat key={f} label={LABEL[f]} value={`${actionCounts[f]}`} />
         ) : null)}
       </div>
+
+      {/* Unclaimed markets */}
+      {userInfo?.unclaimedMarkets?.length > 0 && (
+        <div className="mt-4 rounded-xl border border-rose-500/20 bg-rose-500/5 px-4 py-3">
+          <div className="text-xs text-rose-400 font-semibold mb-1">Unclaimed yield in:</div>
+          <div className="flex flex-wrap gap-2">
+            {userInfo.unclaimedMarkets.map((m: string) => (
+              <span key={m} className="text-xs px-2 py-1 rounded bg-rose-500/10 text-rose-300">{m}</span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Filter chips */}
       <div className="mt-6 flex flex-wrap items-center gap-2">

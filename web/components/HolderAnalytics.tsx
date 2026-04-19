@@ -6,7 +6,7 @@ import {
 } from 'recharts';
 
 type EnrichedUser = {
-  wallet: string; holdingUsd: number; claimUsd: number; txs: number;
+  wallet: string; holdingUsd: number; claimUsd: number; unclaimedUsd: number; txs: number;
   buyYt: number; sellYt: number; buyPt: number; sellPt: number;
   addLiq: number; removeLiq: number; claimYield: number; redeemPt: number;
   markets: number; type: string; firstDate: string | null; lastDate: string | null;
@@ -25,8 +25,8 @@ type TvlHistory = {
   holderConcentration?: Record<string, Concentration>;
 };
 
-type View = 'leaderboard' | 'growth' | 'retention' | 'concentration' | 'whales' | 'tradeSizes' | 'unclaimed';
-type SortKey = 'holdingUsd' | 'claimUsd' | 'txs' | 'markets' | 'firstDate';
+type View = 'leaderboard' | 'growth' | 'retention' | 'concentration' | 'whales' | 'tradeSizes';
+type SortKey = 'holdingUsd' | 'claimUsd' | 'unclaimedUsd' | 'txs' | 'markets' | 'firstDate';
 type Range = '30d' | '90d' | '1y' | 'all';
 
 export function HolderAnalytics() {
@@ -51,6 +51,7 @@ export function HolderAnalytics() {
       switch (sortKey) {
         case 'holdingUsd': va = a.holdingUsd; vb = b.holdingUsd; break;
         case 'claimUsd': va = a.claimUsd; vb = b.claimUsd; break;
+        case 'unclaimedUsd': va = a.unclaimedUsd || 0; vb = b.unclaimedUsd || 0; break;
         case 'txs': va = a.txs; vb = b.txs; break;
         case 'markets': va = a.markets; vb = b.markets; break;
         case 'firstDate':
@@ -109,7 +110,6 @@ export function HolderAnalytics() {
             { key: 'tradeSizes', label: 'Trade Sizes' },
             { key: 'growth', label: 'Growth' },
             { key: 'retention', label: 'Retention' },
-            { key: 'unclaimed', label: 'Unclaimed' },
             { key: 'concentration', label: 'Concentration' },
           ] as { key: View; label: string }[]).map(v => (
             <button key={v.key} onClick={() => setView(v.key)}
@@ -140,6 +140,7 @@ export function HolderAnalytics() {
                 <th className="cell text-left">Wallet</th>
                 <th className="th-sortable cell text-right" onClick={() => onSort('holdingUsd')}>Holdings{arrow('holdingUsd')}</th>
                 <th className="th-sortable cell text-right" onClick={() => onSort('claimUsd')}>Claimed{arrow('claimUsd')}</th>
+                <th className="th-sortable cell text-right" onClick={() => onSort('unclaimedUsd')}>Unclaimed{arrow('unclaimedUsd')}</th>
                 <th className="th-sortable cell text-right" onClick={() => onSort('txs')}>Txns{arrow('txs')}</th>
                 <th className="th-sortable cell text-right" onClick={() => onSort('markets')}>Markets{arrow('markets')}</th>
                 <th className="th-sortable cell text-right" onClick={() => onSort('firstDate')}>First{arrow('firstDate')}</th>
@@ -164,6 +165,7 @@ export function HolderAnalytics() {
                     </td>
                     <td className="cell text-right tabular-nums text-emerald-400/80">{fmtUsd(u.holdingUsd)}</td>
                     <td className="cell text-right tabular-nums text-yellow-400/70">{fmtUsd(u.claimUsd)}</td>
+                    <td className="cell text-right tabular-nums text-rose-400/70">{u.unclaimedUsd > 0 ? fmtUsd(u.unclaimedUsd) : <span className="text-white/15">–</span>}</td>
                     <td className="cell text-right tabular-nums text-white/50">{u.txs || '–'}</td>
                     <td className="cell text-right tabular-nums text-white/50">{u.markets}</td>
                     <td className="cell text-right tabular-nums text-white/30">{u.firstDate || '–'}</td>
@@ -254,55 +256,6 @@ export function HolderAnalytics() {
             </tbody>
           </table>
         )}
-
-        {/* Unclaimed Yields */}
-        {view === 'unclaimed' && (() => {
-          const uc = (analytics as any)?.unclaimed || {};
-          const summary = uc.summary || {};
-          const wallets = uc.byWallet || [];
-          return (
-            <>
-              <div className="p-4 border-b border-eclipse-700/40">
-                <div className="flex items-center gap-6 text-sm flex-wrap">
-                  <span className="text-white/40">YT wallets: <span className="text-white">{summary.totalYtWallets?.toLocaleString()}</span></span>
-                  <span className="text-white/40">Never claimed: <span className="text-rose-400">{summary.neverClaimed?.toLocaleString()} ({summary.neverClaimedPct}%)</span></span>
-                  <span className="text-white/40">Active w/ unclaimed: <span className="text-rose-400">{summary.activeNeverClaimed?.toLocaleString()}</span></span>
-                </div>
-              </div>
-              <table className="w-full text-sm">
-                <thead className="text-xs uppercase tracking-wider text-white/40 bg-eclipse-900/60">
-                  <tr>
-                    <th className="cell">#</th>
-                    <th className="cell text-left">Wallet</th>
-                    <th className="cell text-right">Current YT</th>
-                    <th className="cell text-right">Total Bought</th>
-                    <th className="cell text-right">Markets</th>
-                    <th className="cell">Position</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-eclipse-700/40 text-[13px]">
-                  {wallets.slice(0, 100).map((w: any, i: number) => (
-                    <tr key={w.wallet} onClick={() => router.push(`/wallet/?addr=${w.wallet}`)}
-                        className="cursor-pointer hover:bg-eclipse-800/40">
-                      <td className="cell text-white/30 tabular-nums">{i + 1}</td>
-                      <td className="cell text-xs text-white/70 font-mono">{w.wallet}</td>
-                      <td className="cell text-right tabular-nums text-white">{w.currentYtUsd > 0 ? fmtUsd(w.currentYtUsd) : <span className="text-white/15">–</span>}</td>
-                      <td className="cell text-right tabular-nums text-white/60">{fmtUsd(w.totalBoughtUsd)}</td>
-                      <td className="cell text-right tabular-nums text-white/40">{w.markets}</td>
-                      <td className="cell">
-                        {w.activePositions > 0 ? (
-                          <span className="text-xs px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-400">Active — unclaimed</span>
-                        ) : (
-                          <span className="text-xs px-1.5 py-0.5 rounded bg-white/5 text-white/30">Expired — missed</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </>
-          );
-        })()}
 
         {/* Whale Activity */}
         {view === 'whales' && (
