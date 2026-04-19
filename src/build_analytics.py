@@ -467,6 +467,80 @@ def main():
             markets_by_month[month] += 1
 
     # ========================================
+    # 9. Unclaimed yields
+    # ========================================
+    print('Computing unclaimed yields...')
+    holders_path = os.path.join(ROOT, 'web', 'public', 'holders.json')
+    unclaimed = {'byMarket': {}, 'byWallet': [], 'summary': {}}
+
+    if os.path.exists(holders_path):
+        holders_data = json.load(open(holders_path))
+        live_path = os.path.join(ROOT, 'web', 'public', 'markets-live.json')
+        live_markets = json.load(open(live_path)).get('markets', []) if os.path.exists(live_path) else []
+
+        # Per-market: total claims vs estimated yield
+        claims_per_market_total = defaultdict(float)
+        for e in events:
+            if e.get('action') != 'claimYield': continue
+            market = resolve_market(e)
+            bt = e.get('blockTime', 0)
+            date = datetime.fromtimestamp(bt, tz=timezone.utc).strftime('%Y-%m-%d')
+            pk = MARKET_PRICE_KEY.get(market, 'USD')
+            price = get_price(date, pk)
+            for mint, delta in e.get('tokenChanges', {}).items():
+                if delta > 0 and (mint in PRICEABLE_MINTS or MINT_SYMBOLS_MAP.get(mint, '').startswith(('SY-', 'PT-', 'YT-'))):
+                    claims_per_market_total[market] += delta * price
+
+        # Per-wallet claim totals
+        wallet_claims = defaultdict(float)
+        for e in events:
+            if e.get('action') != 'claimYield': continue
+            signer = e.get('signer', '')
+            bt = e.get('blockTime', 0)
+            date = datetime.fromtimestamp(bt, tz=timezone.utc).strftime('%Y-%m-%d')
+            market = resolve_market(e)
+            pk = MARKET_PRICE_KEY.get(market, 'USD')
+            price = get_price(date, pk)
+            for mint, delta in e.get('tokenChanges', {}).items():
+                if delta > 0 and (mint in PRICEABLE_MINTS or MINT_SYMBOLS_MAP.get(mint, '').startswith(('SY-', 'PT-', 'YT-'))):
+                    wallet_claims[signer] += delta * price
+
+        # YT holders who haven't claimed
+        never_claimed = []
+        for snap_key, snap in holders_data.items():
+            if ':yt' not in snap_key: continue
+            market = snap_key.replace(':yt', '')
+            for h in snap.get('top', []):
+                wallet = h.get('owner', '')
+                balance_usd = h.get('usd', 0)
+                claimed = wallet_claims.get(wallet, 0)
+                never_claimed.append({
+                    'wallet': wallet,
+                    'market': market,
+                    'ytBalanceUsd': round(balance_usd, 2),
+                    'totalClaimed': round(claimed, 2),
+                    'hasClaimed': claimed > 0,
+                })
+
+        never_claimed.sort(key=lambda x: -x['ytBalanceUsd'])
+
+        # Summary
+        total_yt_holders = len(set(x['wallet'] for x in never_claimed))
+        total_never_claimed = len(set(x['wallet'] for x in never_claimed if not x['hasClaimed']))
+        total_yt_usd = sum(x['ytBalanceUsd'] for x in never_claimed)
+
+        unclaimed = {
+            'byWallet': never_claimed[:200],
+            'summary': {
+                'totalYtHolders': total_yt_holders,
+                'neverClaimed': total_never_claimed,
+                'neverClaimedPct': round(total_never_claimed / max(1, total_yt_holders) * 100, 1),
+                'totalYtPositionUsd': round(total_yt_usd),
+                'totalClaimedUsd': round(sum(wallet_claims.values())),
+            },
+        }
+
+    # ========================================
     # Build output
     # ========================================
     print('Building output...')
@@ -534,6 +608,9 @@ def main():
 
         # For MarketCards: activity columns per market
         'marketActivity': market_cols,
+
+        # Unclaimed yields
+        'unclaimed': unclaimed,
 
         # Whale events (top 100 by USD)
         'whaleEvents': whale_events,
