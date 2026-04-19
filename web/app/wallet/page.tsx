@@ -27,7 +27,7 @@ const COLOR: Record<string, string> = {
   strip:'text-white/50', redeemPt:'text-white/50',
 };
 
-type SortKey = 'date' | 'market' | 'action';
+type SortKey = 'date' | 'market' | 'action' | 'usd';
 
 function WalletView() {
   const params = useSearchParams();
@@ -60,6 +60,7 @@ function WalletView() {
       if (sortKey === 'date') c = (a.blockTime || 0) - (b.blockTime || 0);
       else if (sortKey === 'market') c = (a.market || '').localeCompare(b.market || '');
       else if (sortKey === 'action') c = (a.action || '').localeCompare(b.action || '');
+      else if (sortKey === 'usd') c = (a.usd || 0) - (b.usd || 0);
       return c * (asc ? 1 : -1);
     });
     return arr;
@@ -113,7 +114,7 @@ function WalletView() {
               <th className="th-sortable cell text-left" onClick={() => onSort('date')}>Date{arrow('date')}</th>
               <th className="th-sortable cell text-left" onClick={() => onSort('market')}>Market{arrow('market')}</th>
               <th className="th-sortable cell text-left" onClick={() => onSort('action')}>Action{arrow('action')}</th>
-              <th className="cell text-right">USD</th>
+              <th className="th-sortable cell text-right" onClick={() => onSort('usd')}>USD{arrow('usd')}</th>
               <th className="cell text-left">Token Changes</th>
               <th className="cell">Tx</th>
             </tr>
