@@ -33,6 +33,12 @@ const COLORS = [
 
 function round2(n: number) { return Math.round(n * 100) / 100; }
 
+function fmtVal(n: number) {
+  if (n >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
+  if (n >= 1e3) return `$${(n / 1e3).toFixed(1)}K`;
+  return `$${n.toFixed(2)}`;
+}
+
 function normalizePlatform(p: string): string {
   if (/^Hylo/i.test(p)) return 'Hylo';
   if (/^Drift/i.test(p)) return 'Drift';
@@ -477,10 +483,10 @@ export function HistoricalChart() {
                     return (
                       <div style={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: 8, padding: '8px 12px', fontSize: 13 }}>
                         <div style={{ color: '#fff', fontWeight: 600, marginBottom: 4 }}>{dateStr}</div>
-                        <div style={{ color: '#4ade80' }}>Inflow: ${(inf / 1e6).toFixed(2)}M</div>
-                        <div style={{ color: '#f87171' }}>Outflow: ${(outf / 1e6).toFixed(2)}M</div>
+                        <div style={{ color: '#4ade80' }}>Inflow: {fmtVal(inf)}</div>
+                        <div style={{ color: '#f87171' }}>Outflow: {fmtVal(outf)}</div>
                         <div style={{ color: net >= 0 ? '#4ade80' : '#f87171', borderTop: '1px solid #333', marginTop: 4, paddingTop: 4 }}>
-                          Net: {net >= 0 ? '+' : ''}${(net / 1e6).toFixed(2)}M
+                          Net: {net >= 0 ? '+' : '-'}{fmtVal(Math.abs(net))}
                         </div>
                       </div>
                     );
@@ -503,8 +509,8 @@ export function HistoricalChart() {
                               <span style={{ width: 8, height: 8, borderRadius: '50%', background: it.color, display: 'inline-block' }} />
                               {it.name}
                             </span>
-                            <span style={{ color: '#4ade80', fontVariantNumeric: 'tabular-nums' }}>+${(it.inflow / 1e6).toFixed(2)}M</span>
-                            <span style={{ color: '#f87171', fontVariantNumeric: 'tabular-nums' }}>-${(it.outflow / 1e6).toFixed(2)}M</span>
+                            <span style={{ color: '#4ade80', fontVariantNumeric: 'tabular-nums' }}>+{fmtVal(it.inflow)}</span>
+                            <span style={{ color: '#f87171', fontVariantNumeric: 'tabular-nums' }}>-{fmtVal(it.outflow)}</span>
                           </div>
                         ))}
                       </div>
@@ -523,7 +529,7 @@ export function HistoricalChart() {
                             <span style={{ width: 8, height: 8, borderRadius: '50%', background: p.color || seriesColors[p.name] || '#6b66ff', display: 'inline-block' }} />
                             {p.name}
                           </span>
-                          <span style={{ fontVariantNumeric: 'tabular-nums' }}>${(Number(p.value) / 1e6).toFixed(2)}M</span>
+                          <span style={{ fontVariantNumeric: 'tabular-nums' }}>{metric === 'apy' ? `${Number(p.value).toFixed(2)}%` : metric === 'activity' ? Number(p.value).toLocaleString() : fmtVal(Number(p.value))}</span>
                         </div>
                       ))}
                     </div>
