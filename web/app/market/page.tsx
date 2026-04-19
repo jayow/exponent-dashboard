@@ -106,7 +106,7 @@ function MarketView() {
 
   return (
     <main className="mx-auto max-w-[1400px] px-4 sm:px-6 py-10">
-      <Link href="/" className="text-white/40 hover:text-white text-sm">← all markets</Link>
+      <button onClick={() => router.back()} className="text-white/40 hover:text-white text-sm">← back</button>
 
       <div className="mt-4 flex items-baseline gap-4 flex-wrap">
         <h1 className="text-2xl font-semibold text-white">{key}</h1>

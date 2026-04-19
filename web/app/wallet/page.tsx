@@ -1,7 +1,7 @@
 'use client';
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 
 type TokenChange = { symbol: string; delta: number; usd: number };
 type WalletEvent = {
@@ -31,6 +31,7 @@ type SortKey = 'date' | 'market' | 'action' | 'usd';
 
 function WalletView() {
   const params = useSearchParams();
+  const router = useRouter();
   const addr = params.get('addr') || '';
   const [events, setEvents] = useState<WalletEvent[] | null>(null);
   const [enabled, setEnabled] = useState<Set<Filter>>(new Set(ALL_FILTERS));
@@ -76,7 +77,7 @@ function WalletView() {
 
   return (
     <main className="mx-auto max-w-[1400px] px-4 sm:px-6 py-10">
-      <Link href="/" className="text-white/40 hover:text-white text-sm">← back</Link>
+      <button onClick={() => router.back()} className="text-white/40 hover:text-white text-sm">← back</button>
       <h1 className="mt-4 text-2xl font-semibold text-white">Wallet Activity</h1>
       <p className="font-mono text-xs text-white/50 break-all mt-1 flex items-center gap-3 flex-wrap">
         <span>{addr}</span>
