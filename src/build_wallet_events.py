@@ -194,9 +194,21 @@ def main():
             # For GetAccountDataSize with Exponent flag — infer from token changes
             if not action and e.get('exponent') and instr.lower() in ('getaccountdatasize', 'initializeimmutableowner', 'initializeaccount3', ''):
                 tc = e.get('tokenChanges', {})
-                if any(v > 0 for v in tc.values()):
+                net = sum(tc.values()) if tc else 0
+                has_mint = e.get('mintDelta', 0) > 0
+                has_burn = e.get('burnDelta', 0) > 0
+                if has_mint and net < -1:
+                    action = 'addLiq'
+                    instr = 'addLiq (inferred)'
+                elif has_burn and net > 0.01:
                     action = 'claimYield'
                     instr = 'claimYield (inferred)'
+                elif net > 0.01:
+                    action = 'claimYield'
+                    instr = 'claimYield (inferred)'
+                elif net < -1:
+                    action = 'addLiq'
+                    instr = 'addLiq (inferred)'
 
             # Build a clean event for the wallet page
             evt = {
