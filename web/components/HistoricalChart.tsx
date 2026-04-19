@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import {
-  BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
+  ComposedChart, BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
 } from 'recharts';
 
 type FlowData = { inflow: number[]; outflow: number[] };
@@ -221,14 +221,20 @@ export function HistoricalChart() {
 
     // Protocol view
     if (view === 'protocol') {
+      let cumVol = 0;
+      // Sum volume before the visible range for correct cumulative start
+      if (metric === 'volume') {
+        for (let i = 0; i < startIdx; i++) cumVol += data.volume[i] || 0;
+      }
       const rows = dates.map((d, i) => {
         const idx = startIdx + i;
         if (metric === 'tvl') return { date: d, TVL: data.protocol[idx] || 0 };
         if (metric === 'flow') return { date: d, Inflow: data.inflow[idx] || 0, Outflow: -(data.outflow[idx] || 0) };
-        return { date: d, Volume: data.volume[idx] || 0 };
+        cumVol += data.volume[idx] || 0;
+        return { date: d, Volume: data.volume[idx] || 0, Cumulative: cumVol };
       });
       const keys = metric === 'flow' ? ['Inflow', 'Outflow'] : metric === 'tvl' ? ['TVL'] : ['Volume'];
-      const colors: Record<string, string> = { TVL: '#6b66ff', Volume: '#38bdf8', Inflow: '#4ade80', Outflow: '#f87171' };
+      const colors: Record<string, string> = { TVL: '#6b66ff', Volume: '#38bdf8', Cumulative: '#a78bfa', Inflow: '#4ade80', Outflow: '#f87171' };
       return { chartData: rows, series: keys, seriesColors: colors };
     }
 
@@ -463,13 +469,17 @@ export function HistoricalChart() {
               ))}
             </LineChart>
           ) : (
-            <BarChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
+            <ComposedChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
               {...(isFlowProtocol || isFlowBreakdown ? { stackOffset: 'sign' as const } : {})}>
               <XAxis dataKey="date" tick={{ fill: '#8888aa', fontSize: 11 }} axisLine={false} tickLine={false}
                 tickFormatter={fmtTick} interval={interval} />
-              <YAxis tick={{ fill: '#8888aa', fontSize: 11 }} axisLine={false} tickLine={false}
+              <YAxis yAxisId="left" tick={{ fill: '#8888aa', fontSize: 11 }} axisLine={false} tickLine={false}
                 tickFormatter={fmtAxis} width={55} />
-              {(isFlowProtocol || isFlowBreakdown) && <ReferenceLine y={0} stroke="#333" />}
+              {metric === 'volume' && view === 'protocol' && (
+                <YAxis yAxisId="right" orientation="right" tick={{ fill: '#a78bfa', fontSize: 11 }} axisLine={false} tickLine={false}
+                  tickFormatter={fmtAxis} width={55} />
+              )}
+              {(isFlowProtocol || isFlowBreakdown) && <ReferenceLine y={0} stroke="#333" yAxisId="left" />}
               <Tooltip
                 content={({ active, payload, label }) => {
                   if (!active || !payload?.length) return null;
@@ -539,46 +549,49 @@ export function HistoricalChart() {
 
               {/* TVL bars */}
               {metric === 'tvl' && view === 'protocol' && (
-                <Bar dataKey="TVL" fill="#6b66ff" fillOpacity={0.8} />
+                <Bar dataKey="TVL" fill="#6b66ff" fillOpacity={0.8} yAxisId="left" />
               )}
               {metric === 'tvl' && view !== 'protocol' && (
                 series.map((s, i) => (
                   <Bar key={s} dataKey={s} stackId="1"
                     fill={hidden.has(s) ? 'transparent' : seriesColors[s]}
-                    fillOpacity={hidden.has(s) ? 0 : 0.8} />
+                    fillOpacity={hidden.has(s) ? 0 : 0.8} yAxisId="left" />
                 ))
               )}
 
               {/* Flow bars */}
               {isFlowProtocol && (
                 <>
-                  <Bar dataKey="Inflow" fill="#4ade80" fillOpacity={0.7} stackId="s" />
-                  <Bar dataKey="Outflow" fill="#f87171" fillOpacity={0.7} stackId="s" />
+                  <Bar dataKey="Inflow" fill="#4ade80" fillOpacity={0.7} stackId="s" yAxisId="left" />
+                  <Bar dataKey="Outflow" fill="#f87171" fillOpacity={0.7} stackId="s" yAxisId="left" />
                 </>
               )}
               {isFlowBreakdown && (
                 series.flatMap((k) => [
-                  <Bar key={`${k}_in`} dataKey={`${k}_in`} fill={seriesColors[k]} fillOpacity={0.8} stackId="in" />,
-                  <Bar key={`${k}_out`} dataKey={`${k}_out`} fill={seriesColors[k]} fillOpacity={0.4} stackId="out" />,
+                  <Bar key={`${k}_in`} dataKey={`${k}_in`} fill={seriesColors[k]} fillOpacity={0.8} stackId="in" yAxisId="left" />,
+                  <Bar key={`${k}_out`} dataKey={`${k}_out`} fill={seriesColors[k]} fillOpacity={0.4} stackId="out" yAxisId="left" />,
                 ])
               )}
 
-              {/* Volume bars */}
+              {/* Volume bars + cumulative line */}
               {metric === 'volume' && view === 'protocol' && (
-                <Bar dataKey="Volume" fill="#38bdf8" fillOpacity={0.7} />
+                <>
+                  <Bar dataKey="Volume" fill="#38bdf8" fillOpacity={0.7} yAxisId="left" />
+                  <Line type="monotone" dataKey="Cumulative" stroke="#a78bfa" strokeWidth={2} dot={false} yAxisId="right" />
+                </>
               )}
               {metric === 'volume' && view !== 'protocol' && (
                 series.map((k) => (
-                  <Bar key={k} dataKey={k} stackId="1" fill={seriesColors[k]} fillOpacity={0.7} />
+                  <Bar key={k} dataKey={k} stackId="1" fill={seriesColors[k]} fillOpacity={0.7} yAxisId="left" />
                 ))
               )}
             {/* Activity + Claims bars */}
               {(metric === 'activity' || metric === 'claims') && (
                 series.map((k) => (
-                  <Bar key={k} dataKey={k} stackId="1" fill={seriesColors[k]} fillOpacity={0.8} />
+                  <Bar key={k} dataKey={k} stackId="1" fill={seriesColors[k]} fillOpacity={0.8} yAxisId="left" />
                 ))
               )}
-            </BarChart>
+            </ComposedChart>
           )}
         </ResponsiveContainer>
 
@@ -588,6 +601,12 @@ export function HistoricalChart() {
             <>
               <span className="flex items-center gap-1 text-[11px]"><span className="w-2.5 h-2.5 rounded-full bg-emerald-400" /> Inflow</span>
               <span className="flex items-center gap-1 text-[11px]"><span className="w-2.5 h-2.5 rounded-full bg-red-400" /> Outflow</span>
+            </>
+          )}
+          {metric === 'volume' && view === 'protocol' && (
+            <>
+              <span className="flex items-center gap-1 text-[11px]"><span className="w-2.5 h-2.5 rounded-full" style={{ background: '#38bdf8' }} /> Daily Volume</span>
+              <span className="flex items-center gap-1 text-[11px]"><span className="w-2.5 h-2.5 rounded-full" style={{ background: '#a78bfa' }} /> Cumulative</span>
             </>
           )}
           {metric === 'apy' && apyView === 'current' && (
