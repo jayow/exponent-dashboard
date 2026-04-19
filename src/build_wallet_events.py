@@ -194,21 +194,28 @@ def main():
             # For GetAccountDataSize with Exponent flag — infer from token changes
             if not action and e.get('exponent') and instr.lower() in ('getaccountdatasize', 'initializeimmutableowner', 'initializeaccount3', ''):
                 tc = e.get('tokenChanges', {})
-                net = sum(tc.values()) if tc else 0
-                has_mint = e.get('mintDelta', 0) > 0
-                has_burn = e.get('burnDelta', 0) > 0
-                if has_mint and net < -1:
-                    action = 'addLiq'
-                    instr = 'addLiq (inferred)'
-                elif has_burn and net > 0.01:
-                    action = 'claimYield'
-                    instr = 'claimYield (inferred)'
-                elif net > 0.01:
-                    action = 'claimYield'
-                    instr = 'claimYield (inferred)'
-                elif net < -1:
-                    action = 'addLiq'
-                    instr = 'addLiq (inferred)'
+                if tc:
+                    net = sum(tc.values())
+                    has_mint = e.get('mintDelta', 0) > 0
+                    has_burn = e.get('burnDelta', 0) > 0
+                    # Check what types of tokens are changing
+                    symbols = {MINT_SYMBOLS.get(m, m[:8]): d for m, d in tc.items()}
+                    receives_pt = any(k.startswith('PT-') and v > 0 for k, v in symbols.items())
+                    receives_yt = any(k.startswith('YT-') and v > 0 for k, v in symbols.items())
+                    sends_underlying = any(not k.startswith(('PT-', 'YT-', 'SY-')) and v < -0.01 for k, v in symbols.items())
+
+                    if has_mint and sends_underlying:
+                        action = 'addLiq'
+                    elif receives_pt and sends_underlying:
+                        action = 'buyPt'
+                    elif receives_yt and sends_underlying:
+                        action = 'buyYt'
+                    elif receives_pt and receives_yt:
+                        action = 'strip'
+                    elif has_burn and not receives_pt and not receives_yt and net > 0.01:
+                        action = 'claimYield'
+                    elif has_mint and net < -1:
+                        action = 'addLiq'
 
             # Build a clean event for the wallet page
             evt = {
