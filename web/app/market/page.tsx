@@ -76,24 +76,26 @@ function MarketView() {
     if (chartMetric === 'apy') {
       const underlying = (histData.underlyingApyByMarket?.[key] || []).slice(startIdx);
       const impliedSnap = (histData.impliedApyByMarket?.[key] || []).slice(startIdx);
-      // Use derived implied APY from PT trade prices (analytics.json)
       const derivedApy = analyticsData?.impliedApyByMarket?.[key] || {};
+      // Fill forward: carry last known derived APY to days without trades
+      let lastDerived = 0;
       return slicedDates.map((d: string, i: number) => {
-        const derivedVal = derivedApy[d] ? derivedApy[d] * 100 : 0;
+        if (derivedApy[d]) lastDerived = derivedApy[d] * 100;
         const snapVal = (impliedSnap[i] || 0) * 100;
         return {
           date: d,
           Underlying: (underlying[i] || 0) * 100,
-          Implied: derivedVal || snapVal,
+          Implied: lastDerived || snapVal,
         };
       });
     }
     if (chartMetric === 'ptPrice') {
       const ptPrices = analyticsData?.ptPriceByMarket?.[key] || {};
-      return slicedDates.map((d: string) => ({
-        date: d,
-        'PT Price': ptPrices[d] || null,
-      })).filter((r: any) => r['PT Price'] !== null);
+      let lastPrice = 0;
+      return slicedDates.map((d: string) => {
+        if (ptPrices[d]) lastPrice = ptPrices[d];
+        return { date: d, 'PT Price': lastPrice || null };
+      }).filter((r: any) => r['PT Price'] !== null);
     }
     return [];
   }, [histData, analyticsData, key, chartMetric, range]);
