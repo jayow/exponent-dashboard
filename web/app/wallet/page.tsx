@@ -131,14 +131,15 @@ function WalletView() {
                 <td className="cell text-white/70">{e.market || '–'}</td>
                 <td className="cell"><span className={COLOR[e.action] || 'text-white/50'}>{LABEL[e.action] || e.action}</span></td>
                 <td className="cell text-right tabular-nums text-white/60">
-                  {e.usd ? `$${e.usd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '–'}
+                  {e.usd ? fmtUsdVal(e.usd) : '–'}
                 </td>
                 <td className="cell text-xs tabular-nums">
                   {e.changes?.length ? (
                     <div className="flex flex-col gap-0.5">
                       {e.changes.map((c, j) => (
                         <span key={j} className={c.delta > 0 ? 'text-emerald-400/70' : 'text-rose-400/70'}>
-                          {c.delta > 0 ? '+' : ''}{c.delta.toFixed(4)} <span className="text-white/40">{c.symbol}</span>
+                          {c.delta > 0 ? '+' : ''}{fmtAmount(c.delta)} <span className="text-white/40">{c.symbol}</span>
+                          {c.usd != null && c.usd > 0.01 ? <span className="text-white/20 ml-1">(${fmtCompact(c.usd)})</span> : null}
                         </span>
                       ))}
                     </div>
@@ -163,6 +164,26 @@ function WalletView() {
 
 export default function WalletPage() {
   return <Suspense fallback={<div className="mx-auto max-w-[1400px] px-4 py-10 text-white/50">Loading…</div>}><WalletView /></Suspense>;
+}
+
+function fmtUsdVal(n: number) {
+  if (n >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
+  if (n >= 1e3) return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `$${n.toFixed(2)}`;
+}
+
+function fmtCompact(n: number) {
+  if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
+  return n.toFixed(2);
+}
+
+function fmtAmount(n: number) {
+  const abs = Math.abs(n);
+  if (abs >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
+  if (abs >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
+  if (abs >= 1) return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return n.toFixed(4);
 }
 
 function Stat({ label, value }: { label: string; value: string }) {

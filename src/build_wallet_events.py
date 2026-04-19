@@ -247,7 +247,10 @@ def main():
                     total_usd += usd if delta > 0 else -usd
                     changes.append({'symbol': symbol, 'delta': round(delta, 6), 'usd': usd if token_price > 0 else None})
                 evt['changes'] = changes
-                evt['usd'] = round(abs(total_usd), 2)
+                # For swaps/redeems where in and out cancel, show the larger side
+                sum_positive = sum(abs(c['usd']) for c in changes if c.get('usd') and c['delta'] > 0)
+                sum_negative = sum(abs(c['usd']) for c in changes if c.get('usd') and c['delta'] < 0)
+                evt['usd'] = round(max(sum_positive, sum_negative, abs(total_usd)), 2)
 
             wallet_events[signer].append(evt)
 
