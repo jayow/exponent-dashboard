@@ -65,3 +65,8 @@
 - `data/index/enriched_events/{sy_mint}.jsonl` — one line per tx with all fields
 - Build scripts aggregate into analytics JSON files for frontend
 - Daily refresh appends new transactions incrementally
+
+### Added during analytics-1 development
+
+33. Resolve remaining 1,404 unknown market claims (need Exponent program context from logs)
+34. Derive accurate YT/PT spot price from inner instructions (parse internal PT sale within buyYt/sellYt for true AMM price → per-trade implied APY)
