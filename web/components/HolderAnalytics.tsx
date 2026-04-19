@@ -25,7 +25,7 @@ type TvlHistory = {
   holderConcentration?: Record<string, Concentration>;
 };
 
-type View = 'leaderboard' | 'cohorts' | 'growth' | 'retention' | 'concentration' | 'whales' | 'tradeSizes';
+type View = 'leaderboard' | 'cohorts' | 'growth' | 'retention' | 'concentration' | 'whales';
 type SortKey = 'holdingUsd' | 'claimUsd' | 'unclaimedUsd' | 'txs' | 'markets' | 'firstDate';
 type Range = '30d' | '90d' | '1y' | 'all';
 
@@ -116,7 +116,6 @@ export function HolderAnalytics() {
             { key: 'leaderboard', label: 'Users' },
             { key: 'cohorts', label: 'Cohorts' },
             { key: 'whales', label: 'Whale Activity' },
-            { key: 'tradeSizes', label: 'Trade Sizes' },
             { key: 'growth', label: 'Growth' },
             { key: 'retention', label: 'Retention' },
             { key: 'concentration', label: 'Concentration' },
@@ -239,10 +238,12 @@ export function HolderAnalytics() {
             const totalClaimed = members.reduce((s, u) => s + u.claimUsd, 0);
             const avgTxs = members.length > 0 ? Math.round(members.reduce((s, u) => s + u.txs, 0) / members.length) : 0;
             const avgMarkets = members.length > 0 ? (members.reduce((s, u) => s + u.markets, 0) / members.length).toFixed(1) : '0';
+            const trades = members.reduce((s, u) => s + u.buyYt + u.sellYt + u.buyPt + u.sellPt, 0);
+            const avgTradeSize = trades > 0 ? totalHoldings / trades : 0;
             const activePct = members.length > 0
               ? Math.round(members.filter(u => u.lastDate && (Date.now() - new Date(u.lastDate).getTime()) / 86400000 <= 30).length / members.length * 100)
               : 0;
-            return { ...c, max, count: members.length, totalHoldings, totalClaimed, avgTxs, avgMarkets, activePct };
+            return { ...c, max, count: members.length, totalHoldings, totalClaimed, avgTxs, avgMarkets, trades, avgTradeSize, activePct };
           });
           const totalActive = activeUsers.length;
           const totalHoldings = activeUsers.reduce((s, u) => s + u.holdingUsd, 0);
@@ -262,6 +263,8 @@ export function HolderAnalytics() {
                     <th className="cell text-right">Total Holdings</th>
                     <th className="cell text-right">% of TVL</th>
                     <th className="cell text-right">Total Claimed</th>
+                    <th className="cell text-right">Trades</th>
+                    <th className="cell text-right">Avg Trade</th>
                     <th className="cell text-right">Avg Txns</th>
                     <th className="cell text-right">Avg Markets</th>
                     <th className="cell text-right">Active (30d)</th>
@@ -279,6 +282,8 @@ export function HolderAnalytics() {
                       <td className="cell text-right tabular-nums text-emerald-400/80">{fmtUsd(c.totalHoldings)}</td>
                       <td className="cell text-right tabular-nums text-white/50">{totalHoldings > 0 ? (c.totalHoldings / totalHoldings * 100).toFixed(1) : 0}%</td>
                       <td className="cell text-right tabular-nums text-yellow-400/70">{fmtUsd(c.totalClaimed)}</td>
+                      <td className="cell text-right tabular-nums text-white/50">{c.trades.toLocaleString()}</td>
+                      <td className="cell text-right tabular-nums text-white/50">{c.avgTradeSize > 0 ? fmtUsd(c.avgTradeSize) : '–'}</td>
                       <td className="cell text-right tabular-nums text-white/50">{c.avgTxs}</td>
                       <td className="cell text-right tabular-nums text-white/50">{c.avgMarkets}</td>
                       <td className="cell text-right">
@@ -398,32 +403,6 @@ export function HolderAnalytics() {
           </table>
         )}
 
-        {/* Trade Sizes */}
-        {view === 'tradeSizes' && (
-          <div className="p-4">
-            <div className="space-y-3">
-              {Object.entries((analytics as any)?.tradeSizes || {}).map(([bucket, count]: [string, any]) => {
-                const total = Object.values((analytics as any)?.tradeSizes || {}).reduce((s: number, v: any) => s + v, 0) as number;
-                const pct = total > 0 ? (count / total) * 100 : 0;
-                return (
-                  <div key={bucket} className="flex items-center gap-3">
-                    <span className="text-sm text-white/50 w-24 text-right">{bucket}</span>
-                    <div className="flex-1 h-6 bg-white/5 rounded-full overflow-hidden">
-                      <div className="h-full bg-gradient-to-r from-blue-500/60 to-purple-500/60 rounded-full flex items-center px-2"
-                        style={{ width: `${Math.max(2, pct)}%` }}>
-                        {pct > 8 && <span className="text-[10px] text-white/80">{count.toLocaleString()}</span>}
-                      </div>
-                    </div>
-                    <span className="text-xs text-white/40 w-16 text-right">{pct.toFixed(1)}%</span>
-                  </div>
-                );
-              })}
-            </div>
-            <div className="mt-4 text-xs text-white/30 text-center">
-              {Object.values((analytics as any)?.tradeSizes || {}).reduce((s: number, v: any) => s + v, 0).toLocaleString()} total trades
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );
