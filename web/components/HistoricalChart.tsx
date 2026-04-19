@@ -34,6 +34,7 @@ const COLORS = [
 function round2(n: number) { return Math.round(n * 100) / 100; }
 
 function fmtVal(n: number) {
+  if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
   if (n >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
   if (n >= 1e3) return `$${(n / 1e3).toFixed(1)}K`;
   return `$${n.toFixed(2)}`;
@@ -343,6 +344,7 @@ export function HistoricalChart() {
     if (metric === 'apy') return `${v.toFixed(0)}%`;
     if (metric === 'activity') return `${v >= 1000 ? `${(v/1000).toFixed(0)}K` : v}`;
     const abs = Math.abs(v);
+    if (abs >= 1e9) return `$${(v / 1e9).toFixed(1)}B`;
     if (abs >= 1e6) return `$${(v / 1e6).toFixed(0)}M`;
     if (abs >= 1e3) return `$${(v / 1e3).toFixed(0)}K`;
     return `$${v}`;
