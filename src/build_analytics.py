@@ -551,6 +551,10 @@ def main():
             'hasClaimed': claimed > 0,
         })
 
+    # Only keep wallets with unclaimed yield:
+    # - Has active positions and never claimed
+    # - Or bought YT in expired markets and never claimed (missed yield)
+    wallet_unclaimed = [w for w in wallet_unclaimed if not w['hasClaimed']]
     wallet_unclaimed.sort(key=lambda x: -(x['currentYtUsd'] + x['totalBoughtUsd']))
 
     total_wallets = len(wallet_unclaimed)

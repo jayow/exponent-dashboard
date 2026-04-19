@@ -266,9 +266,7 @@ export function HolderAnalytics() {
                 <div className="flex items-center gap-6 text-sm flex-wrap">
                   <span className="text-white/40">YT wallets: <span className="text-white">{summary.totalYtWallets?.toLocaleString()}</span></span>
                   <span className="text-white/40">Never claimed: <span className="text-rose-400">{summary.neverClaimed?.toLocaleString()} ({summary.neverClaimedPct}%)</span></span>
-                  <span className="text-white/40">Active positions: <span className="text-white">{summary.withActivePositions?.toLocaleString()}</span></span>
-                  <span className="text-white/40">Total bought: <span className="text-white">{fmtUsd(summary.totalBoughtUsd || 0)}</span></span>
-                  <span className="text-white/40">Total claimed: <span className="text-emerald-400">{fmtUsd(summary.totalClaimedUsd || 0)}</span></span>
+                  <span className="text-white/40">Active w/ unclaimed: <span className="text-rose-400">{summary.activeNeverClaimed?.toLocaleString()}</span></span>
                 </div>
               </div>
               <table className="w-full text-sm">
@@ -278,9 +276,8 @@ export function HolderAnalytics() {
                     <th className="cell text-left">Wallet</th>
                     <th className="cell text-right">Current YT</th>
                     <th className="cell text-right">Total Bought</th>
-                    <th className="cell text-right">Total Claimed</th>
                     <th className="cell text-right">Markets</th>
-                    <th className="cell">Status</th>
+                    <th className="cell">Position</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-eclipse-700/40 text-[13px]">
@@ -291,15 +288,12 @@ export function HolderAnalytics() {
                       <td className="cell text-xs text-white/70 font-mono">{w.wallet}</td>
                       <td className="cell text-right tabular-nums text-white">{w.currentYtUsd > 0 ? fmtUsd(w.currentYtUsd) : <span className="text-white/15">–</span>}</td>
                       <td className="cell text-right tabular-nums text-white/60">{fmtUsd(w.totalBoughtUsd)}</td>
-                      <td className="cell text-right tabular-nums text-emerald-400/70">{w.totalClaimedUsd > 0 ? fmtUsd(w.totalClaimedUsd) : <span className="text-white/15">$0</span>}</td>
                       <td className="cell text-right tabular-nums text-white/40">{w.markets}</td>
                       <td className="cell">
-                        {!w.hasClaimed ? (
-                          <span className="text-xs px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-400">Never claimed</span>
-                        ) : w.activePositions > 0 ? (
-                          <span className="text-xs px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400">Active</span>
+                        {w.activePositions > 0 ? (
+                          <span className="text-xs px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-400">Active — unclaimed</span>
                         ) : (
-                          <span className="text-xs px-1.5 py-0.5 rounded bg-white/5 text-white/30">Exited</span>
+                          <span className="text-xs px-1.5 py-0.5 rounded bg-white/5 text-white/30">Expired — missed</span>
                         )}
                       </td>
                     </tr>
