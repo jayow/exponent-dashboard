@@ -1,0 +1,79 @@
+name: Daily Dashboard Refresh
+
+on:
+  schedule:
+    # 02:00 UTC daily (adjust as needed)
+    - cron: '0 2 * * *'
+  workflow_dispatch: # allow manual trigger from GitHub UI
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Python deps
+        run: pip install requests base58
+
+      - name: Set up Node (for fetch_live_markets.mjs)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Node deps
+        working-directory: src
+        run: |
+          if [ -f package.json ]; then npm install; fi
+
+      - name: Restore data/ cache
+        uses: actions/cache@v4
+        with:
+          path: data
+          # Key includes run_id so each day produces a new cache while still hitting the latest restore key
+          key: expdash-data-${{ github.run_id }}
+          restore-keys: |
+            expdash-data-
+
+      - name: Create .env from secret
+        run: |
+          echo "HELIUS_API_KEY=${{ secrets.HELIUS_API_KEY }}" > .env
+          if [ -n "${{ secrets.HELIUS_API_KEY_2 }}" ]; then
+            echo "HELIUS_API_KEY_2=${{ secrets.HELIUS_API_KEY_2 }}" >> .env
+          fi
+
+      - name: Run refresh pipeline
+        run: python3 src/refresh.py
+        env:
+          PYTHONUNBUFFERED: '1'
+
+      - name: Commit updated artifacts
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Only commit the published artifacts + small config files (never the big data/ dir)
+          git add web/public/analytics.json \
+                  web/public/data.json \
+                  web/public/holders.json \
+                  web/public/markets-live.json \
+                  web/public/tvl-history.json \
+                  data/tge_dates.json 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "No artifact changes to commit."
+          else
+            git commit -m "chore: daily refresh $(date -u +%Y-%m-%d)"
+            git push origin HEAD:${{ github.ref_name }}
+          fi
