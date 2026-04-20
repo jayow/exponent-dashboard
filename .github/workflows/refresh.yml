@@ -40,6 +40,7 @@ jobs:
           if [ -f package.json ]; then npm install; fi
 
       - name: Restore data/ cache
+        id: data-cache
         uses: actions/cache@v4
         with:
           path: data
@@ -47,6 +48,21 @@ jobs:
           key: expdash-data-${{ github.run_id }}
           restore-keys: |
             expdash-data-
+
+      - name: Seed data/ from release if cache empty
+        if: steps.data-cache.outputs.cache-hit != 'true' || !hashFiles('data/index/enriched/**')
+        run: |
+          if [ ! -d data/index/enriched ] || [ -z "$(ls -A data/index/enriched 2>/dev/null)" ]; then
+            echo "Cache miss — downloading data seed from release..."
+            mkdir -p data
+            curl -L -o /tmp/seed.tar.gz \
+              https://github.com/${{ github.repository }}/releases/download/data-seed-20260420/expdash-data.tar.gz
+            tar -xzf /tmp/seed.tar.gz -C .
+            rm /tmp/seed.tar.gz
+            echo "Seeded: $(du -sh data | cut -f1) in data/"
+          else
+            echo "Cache hit — using existing data/ ($(du -sh data | cut -f1))"
+          fi
 
       - name: Create .env from secret
         run: |
