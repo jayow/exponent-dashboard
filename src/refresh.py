@@ -158,6 +158,12 @@ def main():
             timeout=60
         )
 
+        results['apy_reconstruct'] = run(
+            'python3 src/reconstruct_implied_apy.py',
+            'Step 10a: Reconstruct historical implied APY from events',
+            timeout=180
+        )
+
         results['analytics'] = run(
             'python3 src/build_analytics.py',
             'Step 10: Build activity analytics',

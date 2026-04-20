@@ -75,19 +75,19 @@ function MarketView() {
     }
     if (chartMetric === 'apy') {
       const underlying = (histData.underlyingApyByMarket?.[key] || []).slice(startIdx);
-      const impliedSnap = (histData.impliedApyByMarket?.[key] || []).slice(startIdx);
-      // Use API daily snapshots (accurate spot price) — builds up over time
-      // Fill forward last known snapshot value
-      let lastImplied = 0;
+      const impliedByDate: Record<string, number> = analyticsData?.impliedApyByMarket?.[key] || {};
+      // Market start date: earliest key in impliedByDate (reconstructed data starts at market creation)
+      const impliedDates = Object.keys(impliedByDate).sort();
+      const marketStart = impliedDates[0] || '';
       return slicedDates.map((d: string, i: number) => {
-        const snapVal = (impliedSnap[i] || 0) * 100;
-        if (snapVal > 0) lastImplied = snapVal;
+        if (marketStart && d < marketStart) return null;
+        const impliedVal = impliedByDate[d] ? impliedByDate[d] * 100 : null;
         return {
           date: d,
           Underlying: (underlying[i] || 0) * 100,
-          Implied: lastImplied,
+          Implied: impliedVal,
         };
-      });
+      }).filter((r: any) => r !== null && (r.Implied !== null || r.Underlying > 0));
     }
     if (chartMetric === 'ptPrice') {
       const ptPrices = analyticsData?.ptPriceByMarket?.[key] || {};

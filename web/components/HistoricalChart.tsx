@@ -20,7 +20,7 @@ type TvlHistory = {
   marketMeta?: Record<string, { status: string; platform?: string }>;
 };
 
-type Metric = 'tvl' | 'flow' | 'volume' | 'activity' | 'claims';
+type Metric = 'tvl' | 'flow' | 'volume' | 'activity' | 'claims' | 'fees';
 type ActivityMode = 'count' | 'usd';
 type View = 'protocol' | 'platform' | 'market';
 type Range = '30d' | '90d' | '1y' | 'all';
@@ -66,10 +66,14 @@ export function HistoricalChart() {
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [hideExpired, setHideExpired] = useState(false);
   const [activityMode, setActivityMode] = useState<ActivityMode>('usd');
+  const [feeMode, setFeeMode] = useState<'revenue' | 'fees'>('revenue');
+  const [showTge, setShowTge] = useState(true);
+  const [tgeDates, setTgeDates] = useState<Array<{ platform: string; token: string; date: string; note?: string }>>([]);
 
   useEffect(() => {
     fetch('/tvl-history.json').then(r => r.json()).then(setData).catch(() => null);
     fetch('/analytics.json').then(r => r.json()).then(setAnalyticsData).catch(() => null);
+    fetch('/tge_dates.json').then(r => r.json()).then(d => setTgeDates((d.tges || []).filter((t: any) => t.date))).catch(() => null);
   }, []);
 
   const activeMarketKeys = useMemo(() => {
@@ -167,6 +171,55 @@ export function HistoricalChart() {
           cumClaim2 += v;
         });
         row['Cumulative'] = cumClaim2;
+        return row;
+      });
+      colors['Cumulative'] = '#a78bfa';
+      return { chartData: rows, series: keys, seriesColors: colors };
+    }
+
+    if (metric === 'fees' && analyticsData) {
+      // Fees use their OWN date array (feeDates) — full protocol history from Oct 2024
+      const fDates: string[] = analyticsData.feeDates || [];
+      const fCutoff = range === 'all' ? fDates.length : rangeDays[range];
+      const fStartIdx = Math.max(0, fDates.length - fCutoff);
+      const isRev = feeMode === 'revenue';
+      const label = isRev ? 'Protocol Revenue' : 'Total Fees';
+      const barColor = isRev ? '#f59e0b' : '#22d3ee';
+
+      if (view === 'protocol') {
+        const df = (isRev ? analyticsData.dailyRevenue : analyticsData.dailyFees) || [];
+        let cum = 0;
+        for (let i = 0; i < fStartIdx; i++) cum += df[i] || 0;
+        const rows = fDates.slice(fStartIdx).map((d: string, i: number) => {
+          cum += df[fStartIdx + i] || 0;
+          return { date: d, [label]: df[fStartIdx + i] || 0, Cumulative: cum };
+        });
+        return { chartData: rows, series: [label], seriesColors: { [label]: barColor, Cumulative: '#a78bfa' } };
+      }
+      const source = isRev
+        ? (view === 'platform' ? analyticsData.revenueByPlatformSeries : analyticsData.revenueByTickerSeries)
+        : (view === 'platform' ? analyticsData.feesByPlatformSeries : analyticsData.feesByTickerSeries);
+      if (!source) return { chartData: [] as Record<string, any>[], series: [] as string[], seriesColors: {} as Record<string, string> };
+      const entries = Object.entries(source as Record<string, number[]>)
+        .map(([k, v]) => ({ key: k, total: v.reduce((s, x) => s + x, 0) }))
+        .filter(e => e.total > 0)
+        .sort((a, b) => b.total - a.total)
+        .slice(0, 8);
+      const keys = entries.map(e => e.key);
+      const colors: Record<string, string> = {};
+      keys.forEach((k, i) => { colors[k] = COLORS[i % COLORS.length]; });
+      let cum2 = 0;
+      for (let i = 0; i < fStartIdx; i++) {
+        keys.forEach(k => { cum2 += (source[k] || [])[i] || 0; });
+      }
+      const rows = fDates.slice(fStartIdx).map((d: string, i: number) => {
+        const row: Record<string, any> = { date: d };
+        keys.forEach(k => {
+          const v = (source[k] || [])[fStartIdx + i] || 0;
+          row[k] = v;
+          cum2 += v;
+        });
+        row['Cumulative'] = cum2;
         return row;
       });
       colors['Cumulative'] = '#a78bfa';
@@ -303,7 +356,7 @@ export function HistoricalChart() {
     }
 
     return { chartData: rows, series: keys, seriesColors: colors };
-  }, [data, metric, view, range, hidden, hideExpired, activeMarketKeys, activityMode]);
+  }, [data, metric, view, range, hidden, hideExpired, activeMarketKeys, activityMode, feeMode]);
 
   if (!data) return <div className="text-white/30 text-sm py-4">Loading…</div>;
 
@@ -334,15 +387,25 @@ export function HistoricalChart() {
       <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1">
-            {(['tvl', 'flow', 'volume', 'activity', 'claims'] as Metric[]).map(m => (
+            {(['tvl', 'flow', 'volume', 'activity', 'claims', 'fees'] as Metric[]).map(m => (
               <button key={m} onClick={() => { setMetric(m); setHidden(new Set()); }}
                 className={`text-xs px-3 py-1.5 rounded-lg border transition ${
                   metric === m ? 'border-white/30 bg-white/10 text-white' : 'border-white/10 text-white/40 hover:text-white'
                 }`}>
-                {m === 'tvl' ? 'TVL' : m === 'flow' ? 'Inflow / Outflow' : m === 'volume' ? 'Volume' : m === 'activity' ? 'Activity' : 'Claims'}
+                {m === 'tvl' ? 'TVL' : m === 'flow' ? 'Inflow / Outflow' : m === 'volume' ? 'Volume' : m === 'activity' ? 'Activity' : m === 'claims' ? 'Claims' : 'Fees'}
               </button>
             ))}
           </div>
+          {metric === 'fees' && (
+            <div className="flex items-center gap-1">
+              {(['revenue', 'fees'] as const).map(m => (
+                <button key={m} onClick={() => setFeeMode(m)}
+                  className={`text-xs px-2.5 py-1 rounded-md transition ${feeMode === m ? 'bg-white/10 text-white' : 'text-white/30 hover:text-white/60'}`}>
+                  {m === 'revenue' ? 'Revenue' : 'Fees'}
+                </button>
+              ))}
+            </div>
+          )}
           {metric === 'activity' && view === 'protocol' ? (
             <div className="flex items-center gap-1">
               {(['usd', 'count'] as ActivityMode[]).map(m => (
@@ -367,6 +430,14 @@ export function HistoricalChart() {
         </div>
         {(
           <div className="flex items-center gap-2">
+            {tgeDates.length > 0 && (
+              <button onClick={() => setShowTge(v => !v)}
+                className={`text-xs px-2.5 py-1 rounded-md border transition ${
+                  showTge ? 'border-amber-400/40 bg-amber-400/10 text-amber-300' : 'border-white/10 text-white/30 hover:text-white/60'
+                }`}>
+                TGEs
+              </button>
+            )}
             {view === 'market' && (
               <button onClick={() => { setHideExpired(v => !v); setHidden(new Set()); }}
                 className={`text-xs px-2.5 py-1 rounded-md border transition ${
@@ -392,17 +463,33 @@ export function HistoricalChart() {
       <div className="rounded-2xl border border-eclipse-700/60 bg-eclipse-900/40 backdrop-blur p-4">
         <ResponsiveContainer width="100%" height={340}>
           {(
-            <ComposedChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
+            <ComposedChart data={chartData} margin={{ top: 20, right: 20, left: 10, bottom: 5 }}
               {...(isFlowProtocol || isFlowBreakdown ? { stackOffset: 'sign' as const } : {})}>
               <XAxis dataKey="date" tick={{ fill: '#8888aa', fontSize: 11 }} axisLine={false} tickLine={false}
                 tickFormatter={fmtTick} interval={interval} />
               <YAxis yAxisId="left" tick={{ fill: '#8888aa', fontSize: 11 }} axisLine={false} tickLine={false}
                 tickFormatter={fmtAxis} width={55} />
-              {(metric === 'volume' || metric === 'claims') && (
+              {(metric === 'volume' || metric === 'claims' || metric === 'fees') && (
                 <YAxis yAxisId="right" orientation="right" tick={{ fill: '#a78bfa', fontSize: 11 }} axisLine={false} tickLine={false}
                   tickFormatter={fmtAxis} width={55} />
               )}
               {(isFlowProtocol || isFlowBreakdown) && <ReferenceLine y={0} stroke="#333" yAxisId="left" />}
+              {showTge && tgeDates.map(tge => {
+                const inRange = chartData.some((r: any) => r.date === tge.date);
+                if (!inRange) return null;
+                const label = tge.token || tge.platform;
+                return (
+                  <ReferenceLine key={tge.date + tge.token} x={tge.date} yAxisId="left"
+                    stroke="#f59e0b" strokeDasharray="3 3" strokeOpacity={0.7}
+                    label={{
+                      value: label,
+                      position: 'insideTopLeft',
+                      fill: '#f59e0b',
+                      fontSize: 10,
+                      offset: 4,
+                    }} />
+                );
+              })}
               <Tooltip
                 content={({ active, payload, label }) => {
                   if (!active || !payload?.length) return null;
@@ -528,6 +615,19 @@ export function HistoricalChart() {
                   <Line type="monotone" dataKey="Cumulative" stroke="#a78bfa" strokeWidth={2} dot={false} yAxisId="right" />
                 </>
               )}
+              {/* Fees bars + cumulative line */}
+              {metric === 'fees' && (
+                <>
+                  {view === 'protocol' ? (
+                    <Bar dataKey={feeMode === 'revenue' ? 'Protocol Revenue' : 'Total Fees'} fill={feeMode === 'revenue' ? '#f59e0b' : '#22d3ee'} fillOpacity={0.7} yAxisId="left" />
+                  ) : (
+                    series.map((k) => (
+                      <Bar key={k} dataKey={k} stackId="1" fill={seriesColors[k]} fillOpacity={0.8} yAxisId="left" />
+                    ))
+                  )}
+                  <Line type="monotone" dataKey="Cumulative" stroke="#a78bfa" strokeWidth={2} dot={false} yAxisId="right" />
+                </>
+              )}
             </ComposedChart>
           )}
         </ResponsiveContainer>
@@ -544,6 +644,9 @@ export function HistoricalChart() {
             <span className="flex items-center gap-1 text-[11px]"><span className="w-2.5 h-2.5 rounded-full" style={{ background: '#a78bfa' }} /> Cumulative</span>
           )}
           {metric === 'claims' && (
+            <span className="flex items-center gap-1 text-[11px]"><span className="w-2.5 h-2.5 rounded-full" style={{ background: '#a78bfa' }} /> Cumulative</span>
+          )}
+          {metric === 'fees' && (
             <span className="flex items-center gap-1 text-[11px]"><span className="w-2.5 h-2.5 rounded-full" style={{ background: '#a78bfa' }} /> Cumulative</span>
           )}
           {metric === 'tvl' && view !== 'protocol' && (

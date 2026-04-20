@@ -260,6 +260,22 @@ def parse_tx(tx_data, sy_mint):
             exchange_rate = int(m.group(1))
             break
 
+    # Capture ALL program returns (for per-wrapper sy_rate decoding later)
+    program_returns = {}
+    for log in logs:
+        if log.startswith('Program return: '):
+            parts = log[len('Program return: '):].split(' ', 1)
+            if len(parts) == 2:
+                pid, b64 = parts
+                program_returns.setdefault(pid, []).append(b64)
+
+    # Capture compact log summary — all Program invoke/log lines for Exponent context
+    # Used for debugging and extracting anything not captured otherwise
+    rich_logs = []
+    for log in logs:
+        if ('Program log:' in log or 'Program return:' in log or 'invoke' in log or 'success' in log or 'failed' in log):
+            rich_logs.append(log)
+
     # Market identification
     market = None
     for mint in token_changes:
@@ -294,6 +310,8 @@ def parse_tx(tx_data, sy_mint):
     if sy_mint_delta: event['mintDelta'] = sy_mint_delta
     if sy_burn_delta: event['burnDelta'] = sy_burn_delta
     if exchange_rate: event['exchangeRate'] = exchange_rate
+    if program_returns: event['returns'] = program_returns
+    if rich_logs: event['logs'] = rich_logs
     if is_exponent and not action: event['exponent'] = True
 
     # Inner instruction summary (compact format)

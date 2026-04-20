@@ -81,7 +81,8 @@ _token_prices_path = os.path.join(DATA_DIR, 'token_prices.json')
 if os.path.exists(_token_prices_path):
     TOKEN_PRICES = json.load(open(_token_prices_path))
 
-# Extended mint→market mapping for all 88 markets
+# Extended mint→market mapping: includes active (from API) + expired (from MarketTwo discovery).
+# all_market_treasuries.json has mint_pt and mint_sy for EVERY market instance (98 markets).
 ALL_MINT_TO_MARKET = {}
 _all_markets_path = os.path.join(DATA_DIR, 'tvl', 'all_markets.json')
 if os.path.exists(_all_markets_path):
@@ -90,6 +91,16 @@ if os.path.exists(_all_markets_path):
             _mint = _m.get(_f, '')
             if _mint:
                 ALL_MINT_TO_MARKET[_mint] = _m['key']
+# Layer in mints from the on-chain-derived market treasuries (includes expired markets)
+_all_treasuries_path = os.path.join(DATA_DIR, 'all_market_treasuries.json')
+if os.path.exists(_all_treasuries_path):
+    for _m in json.load(open(_all_treasuries_path)):
+        _key = _m.get('key', '')
+        if not _key: continue
+        for _f in ('mint_pt', 'mint_sy'):
+            _mint = _m.get(_f, '')
+            if _mint and _mint not in ALL_MINT_TO_MARKET:
+                ALL_MINT_TO_MARKET[_mint] = _key
 
 # Symbol→market mapping for underlying tokens
 SYMBOL_TO_MARKET = {}
@@ -115,6 +126,26 @@ def resolve_market(event):
             if sym.startswith(prefix) and sym[len(prefix):] in SYMBOL_TO_MARKET:
                 return SYMBOL_TO_MARKET[sym[len(prefix):]]
     return 'unknown'
+
+def _price_key_for_ticker(ticker):
+    """Map a ticker to its price feed key (USD/SOL/BTC/xSOL).
+    Default USD for unknown tokens (safer than SOL which would inflate values)."""
+    t = (ticker or '').upper()
+    # USD-pegged or USD-denominated (LP indexes priced in USD)
+    if t in ('USD', 'USDC', 'USDT', 'USX', 'EUSX', 'HYUSD', 'SHYUSD', 'USD*', 'ONYC',
+             'KUSDC', 'MUSDC', 'MUSDT', 'USDC+', 'USDE', 'SUSDE', 'SYRUPUSDC', 'JLUSDG',
+             'MLP-USDC', 'ALP', 'JLP', 'MLP', 'CRT', 'STORE'):
+        return 'USD'
+    if t == 'XSOL':
+        return 'xSOL'
+    if 'BTC' in t:
+        return 'BTC'
+    # SOL-denominated LSTs
+    if t in ('FRAGSOL', 'HYLOSOL', 'HYLOSOL+', 'BULKSOL', 'JITOSOL', 'DSOL', 'KYSOL',
+             'DZSOL', 'DFDVSOL', 'JLSOL', 'INF'):
+        return 'SOL'
+    return 'USD'  # safer default than SOL
+
 
 def normalize_platform(p):
     if not p: return 'Other'
@@ -629,37 +660,122 @@ def main():
     }
 
     # ========================================
-    # 10-11. Protocol fee revenue
+    # 10-11. Protocol fee revenue (from on-chain treasury transfers)
+    # Keyed by TREASURY in fee_history.json, aggregated by TICKER here.
+    # Per-treasury bps from all_market_treasuries.json gives us:
+    #   Revenue = treasury inflows (what protocol receives)
+    #   Total fees = Revenue / (bps/10000) (what users pay)
+    #   LP fees = Total - Revenue (what goes to LPs)
     # ========================================
-    print('Computing fee revenue...')
+    print('Computing fee revenue from treasury history...')
+
+    # Load all market treasuries (active + expired) for treasury → ticker/bps/decimals lookup
+    _all_mkts_path = os.path.join(DATA_DIR, 'all_market_treasuries.json')
+    _all_mkts = json.load(open(_all_mkts_path)) if os.path.exists(_all_mkts_path) else []
+    # Pick the lowest bps per treasury (markets sharing a treasury may have diff bps per instance; use min/latest active)
+    # Use the ACTIVE or most recent market's info for each treasury.
+    treasury_info = {}  # treasury → { ticker, decimals, bps, price_key, platform }
+    for m in _all_mkts:
+        t = m['treasury']
+        ticker = m.get('ticker', '')
+        # Prefer active markets; if multiple, prefer most recent expiry
+        existing = treasury_info.get(t)
+        is_active = m.get('status') == 'active'
+        cur_exp = m.get('expiry_ts', 0)
+        if (not existing
+            or (is_active and not existing.get('is_active'))
+            or (is_active == existing.get('is_active') and cur_exp > existing.get('expiry_ts', 0))):
+            platform_raw = m.get('platform', '')
+            treasury_info[t] = {
+                'ticker': ticker,
+                'decimals': m.get('decimals', 6),
+                'bps': m.get('bps', 2000) or 2000,
+                'platform': normalize_platform(platform_raw),
+                'is_active': is_active,
+                'expiry_ts': cur_exp,
+                'price_key': _price_key_for_ticker(ticker),
+            }
+
+    daily_rev_protocol = defaultdict(float)
     daily_fees_protocol = defaultdict(float)
-    fees_by_market = defaultdict(float)
+    daily_lp_protocol = defaultdict(float)
+    daily_rev_by_ticker = defaultdict(lambda: defaultdict(float))
+    daily_rev_by_platform = defaultdict(lambda: defaultdict(float))
+    daily_fees_by_ticker = defaultdict(lambda: defaultdict(float))
+    daily_fees_by_platform = defaultdict(lambda: defaultdict(float))
+    rev_by_ticker = defaultdict(float)
+    rev_by_platform = defaultdict(float)
+    fees_by_ticker = defaultdict(float)
     fees_by_platform = defaultdict(float)
     total_gas_usd = 0
 
+    _fee_hist_path = os.path.join(DATA_DIR, 'fee_history.json')
+    _fee_history = json.load(open(_fee_hist_path)) if os.path.exists(_fee_hist_path) else {}
+
+    for treasury, entries in _fee_history.items():
+        info = treasury_info.get(treasury)
+        if not info:
+            continue
+        ticker = info['ticker']
+        decimals = info['decimals']
+        bps = info['bps']
+        platform = info['platform']
+        pk = info['price_key']
+        for entry in entries:
+            ts, sig = entry[0], entry[1]
+            delta_raw = entry[2]
+            if delta_raw <= 0:
+                continue
+            date = datetime.fromtimestamp(ts, tz=timezone.utc).strftime('%Y-%m-%d')
+            price = get_price(date, pk)
+            revenue_usd = delta_raw / (10 ** decimals) * price
+            # Total fees = revenue / (bps/10000); LP fees = total - revenue
+            total_fees_usd = revenue_usd / (bps / 10000) if bps > 0 else revenue_usd
+            lp_usd = total_fees_usd - revenue_usd
+
+            daily_rev_protocol[date] += revenue_usd
+            daily_fees_protocol[date] += total_fees_usd
+            daily_lp_protocol[date] += lp_usd
+            daily_rev_by_ticker[ticker][date] += revenue_usd
+            daily_fees_by_ticker[ticker][date] += total_fees_usd
+            daily_rev_by_platform[platform][date] += revenue_usd
+            daily_fees_by_platform[platform][date] += total_fees_usd
+            rev_by_ticker[ticker] += revenue_usd
+            rev_by_platform[platform] += revenue_usd
+            fees_by_ticker[ticker] += total_fees_usd
+            fees_by_platform[platform] += total_fees_usd
+
     for e in events:
-        bt = e.get('blockTime', 0)
-        date = datetime.fromtimestamp(bt, tz=timezone.utc).strftime('%Y-%m-%d')
-        market = resolve_market(e)
-        platform = normalize_platform(MARKET_PLATFORM.get(market, ''))
-        pk = MARKET_PRICE_KEY.get(market, 'USD')
-        price = get_price(date, pk)
-
-        # Fee transfers (from inner instructions)
-        for fee in (e.get('fees') or []):
-            decimals = MARKET_DECIMALS.get(market, 6)
-            fee_usd = fee['amount'] / (10 ** decimals) * price
-            daily_fees_protocol[date] += fee_usd
-            fees_by_market[market] += fee_usd
-            fees_by_platform[platform] += fee_usd
-
-        # Gas costs
         gas_lamports = e.get('gasFee', 0)
         if gas_lamports:
+            bt = e.get('blockTime', 0)
+            date = datetime.fromtimestamp(bt, tz=timezone.utc).strftime('%Y-%m-%d')
             sol_price = PRICES.get('SOL', {}).get(date, 88)
             total_gas_usd += gas_lamports / 1e9 * sol_price
 
-    fee_series = [round(daily_fees_protocol.get(d, 0), 2) for d in all_dates]
+    # Build series from earliest fee date through today (may extend beyond all_dates which is activity-based)
+    all_fee_dates = set(daily_rev_protocol.keys())
+    _fee_date_list = sorted(all_fee_dates)
+    fee_series_rev = [round(daily_rev_protocol.get(d, 0), 2) for d in _fee_date_list]
+    fee_series_total = [round(daily_fees_protocol.get(d, 0), 2) for d in _fee_date_list]
+    fee_series_lp = [round(daily_lp_protocol.get(d, 0), 2) for d in _fee_date_list]
+
+    rev_by_ticker_series = {
+        t: [round(daily_rev_by_ticker[t].get(d, 0), 2) for d in _fee_date_list]
+        for t in rev_by_ticker if rev_by_ticker[t] > 0
+    }
+    fees_by_ticker_series = {
+        t: [round(daily_fees_by_ticker[t].get(d, 0), 2) for d in _fee_date_list]
+        for t in fees_by_ticker if fees_by_ticker[t] > 0
+    }
+    rev_by_platform_series = {
+        p: [round(daily_rev_by_platform[p].get(d, 0), 2) for d in _fee_date_list]
+        for p in rev_by_platform if rev_by_platform[p] > 0
+    }
+    fees_by_platform_series = {
+        p: [round(daily_fees_by_platform[p].get(d, 0), 2) for d in _fee_date_list]
+        for p in fees_by_platform if fees_by_platform[p] > 0
+    }
 
     # ========================================
     # 17. Position duration
@@ -694,16 +810,36 @@ def main():
             if days > 0 and days < 1000:
                 durations[pos['type'] or 'yt'].append(round(days, 1))
 
+    # Histogram buckets (days held)
+    _buckets = [(0, 1, '< 1d'), (1, 7, '1-7d'), (7, 30, '7-30d'),
+                (30, 60, '30-60d'), (60, 90, '60-90d'), (90, 180, '90-180d'),
+                (180, float('inf'), '180d+')]
+
+    # Count still-open positions per type (opened but not closed)
+    open_counts = {'yt': 0, 'pt': 0, 'lp': 0}
+    for key, pos in position_events.items():
+        if pos['open'] and not pos['close']:
+            open_counts[pos['type'] or 'yt'] += 1
+
     duration_stats = {}
     for pos_type, d_list in durations.items():
         if d_list:
             d_list.sort()
+            # Build histogram
+            hist = []
+            for lo, hi, label in _buckets:
+                cnt = sum(1 for d in d_list if lo <= d < hi)
+                hist.append({'bucket': label, 'count': cnt})
             duration_stats[pos_type] = {
                 'count': len(d_list),
+                'openCount': open_counts.get(pos_type, 0),
                 'avgDays': round(sum(d_list) / len(d_list), 1),
                 'medianDays': d_list[len(d_list) // 2],
+                'p25Days': d_list[len(d_list) // 4],
+                'p75Days': d_list[3 * len(d_list) // 4],
                 'minDays': d_list[0],
                 'maxDays': d_list[-1],
+                'histogram': hist,
             }
 
     # ========================================
@@ -812,16 +948,27 @@ def main():
                 continue
             elif abs(delta) > 0.001:
                 underlying_amt = abs(delta)
-        if pt_amt > 0 and underlying_amt > 0:
+        if pt_amt > 0.01 and underlying_amt > 0.01:
             pt_price = underlying_amt / pt_amt
-            if 0.5 < pt_price < 1.5:
+            if 0.70 < pt_price < 1.02:
                 date = datetime.fromtimestamp(bt, tz=timezone.utc).strftime('%Y-%m-%d')
-                pt_prices_by_market[market].append((date, bt, round(pt_price, 6)))
+                pt_prices_by_market[market].append((date, bt, pt_price, underlying_amt))
 
     # Build daily PT price (median per day) + implied APY per market
+    # Forward-fill gaps, apply 5-day EMA smoothing, merge on-chain snapshots
     daily_pt_price = {}
     daily_implied_apy = {}
+
+    # Load reconstructed implied APY history (exact, via AMM formula replay)
+    _recon_path = os.path.join(DATA_DIR, 'implied_apy_history.json')
+    _reconstructed = {}
+    if os.path.exists(_recon_path):
+        _reconstructed = json.load(open(_recon_path))
+
     for mk, prices in pt_prices_by_market.items():
+        # If we have exact reconstructed data for this market, skip trade-derived entirely
+        if mk in _reconstructed:
+            continue
         prices.sort(key=lambda x: x[1])
         mat_ts = 0
         for m_data in MARKET_META.values():
@@ -829,34 +976,131 @@ def main():
                 mat_ts = m_data.get('maturityTs', 0)
                 break
 
-        # Group by day and take median
-        day_prices = defaultdict(list)
-        day_times = {}
-        for date, bt, pt_p in prices:
-            day_prices[date].append(pt_p)
-            day_times[date] = bt
+        # Group by day: collect (pt_price, volume) pairs for VWAP
+        day_trades = defaultdict(list)
+        for date, bt, pt_p, vol in prices:
+            day_trades[date].append((pt_p, vol))
 
-        daily_pt = {}
-        daily_apy = {}
-        for date, pts in sorted(day_prices.items()):
-            pts.sort()
-            median_pt = pts[len(pts) // 2]
-            daily_pt[date] = round(median_pt, 6)
-            bt = day_times[date]
-            if mat_ts > bt:
-                years = (mat_ts - bt) / (365.25 * 86400)
+        # Compute VWAP per day → implied APY
+        raw_apy = {}
+        raw_pt = {}
+        for date, trades in sorted(day_trades.items()):
+            total_underlying = sum(v for _, v in trades)
+            total_pt = sum(v / p for p, v in trades)
+            if total_pt < 0.01:
+                continue
+            vwap = total_underlying / total_pt
+            if not (0.85 < vwap < 1.02):
+                continue
+            raw_pt[date] = vwap
+            ts = datetime.strptime(date, '%Y-%m-%d').replace(tzinfo=timezone.utc).timestamp()
+            if mat_ts > ts:
+                years = (mat_ts - ts) / (365.25 * 86400)
                 if years > 0.01:
-                    apy = -math.log(median_pt) / years
-                    daily_apy[date] = round(apy, 6)
-        if daily_pt:
-            daily_pt_price[mk] = daily_pt
-            daily_implied_apy[mk] = daily_apy
+                    apy = -math.log(vwap) / years
+                    if 0 < apy < 0.5:
+                        raw_apy[date] = apy
+
+        if not raw_pt:
+            continue
+
+        # Fill date range (first trade → min(maturity, today))
+        all_dates = sorted(raw_pt.keys())
+        start = datetime.strptime(all_dates[0], '%Y-%m-%d')
+        mat_date = datetime.fromtimestamp(mat_ts, tz=timezone.utc) if mat_ts else start
+        today_dt = datetime.now(timezone.utc)
+        end = min(mat_date, today_dt)
+        end_str = end.strftime('%Y-%m-%d')
+
+        # Forward-fill PT prices (max 7 day gap), merge on-chain snapshots
+        filled_pt = {}
+        filled_apy = {}
+        d = start
+        last_pt = None
+        last_apy = None
+        gap_days = 0
+        while d.strftime('%Y-%m-%d') <= end_str:
+            ds = d.strftime('%Y-%m-%d')
+            if ds in raw_pt:
+                last_pt = raw_pt[ds]
+                last_apy = raw_apy.get(ds)
+                gap_days = 0
+            else:
+                gap_days += 1
+            if last_pt is not None and gap_days <= 7:
+                filled_pt[ds] = last_pt
+                if last_apy is not None:
+                    filled_apy[ds] = last_apy
+            elif gap_days > 7:
+                last_pt = None
+                last_apy = None
+            d += timedelta(days=1)
+
+        # Merge reconstructed history (exact AMM-replay values, highest priority)
+        if mk in _reconstructed:
+            for recon_date, r in _reconstructed[mk].items():
+                filled_apy[recon_date] = r['impliedApy']
+                # Derive PT price from rate and years_to_maturity
+                if mat_ts > 0:
+                    rd_ts = datetime.strptime(recon_date, '%Y-%m-%d').replace(tzinfo=timezone.utc).timestamp()
+                    if mat_ts > rd_ts:
+                        years_r = (mat_ts - rd_ts) / (365.25 * 86400)
+                        filled_pt[recon_date] = round(1.0 / math.exp(r['impliedApy'] * years_r), 6)
+
+        # If we have reconstructed data, use it directly (exact AMM values, no smoothing)
+        # Otherwise apply 5-day EMA smoothing to trade-derived values
+        if mk in _reconstructed:
+            smoothed_apy = {d: round(v, 6) for d, v in sorted(filled_apy.items())}
+        else:
+            alpha = 2.0 / (5 + 1)
+            sorted_dates = sorted(filled_apy.keys())
+            smoothed_apy = {}
+            ema = None
+            prev_date = None
+            for ds in sorted_dates:
+                v = filled_apy[ds]
+                if prev_date:
+                    d_cur = datetime.strptime(ds, '%Y-%m-%d')
+                    d_prev = datetime.strptime(prev_date, '%Y-%m-%d')
+                    if (d_cur - d_prev).days > 7:
+                        ema = None
+                if ema is None:
+                    ema = v
+                else:
+                    ema = alpha * v + (1 - alpha) * ema
+                smoothed_apy[ds] = round(ema, 6)
+                prev_date = ds
+
+        daily_pt_price[mk] = {d: round(v, 6) for d, v in sorted(filled_pt.items())}
+        daily_implied_apy[mk] = smoothed_apy
+
+    # Add reconstructed-only markets (no trades indexed but have replay data)
+    for mk, recon in _reconstructed.items():
+        if mk in daily_implied_apy:
+            continue
+        mat_ts = 0
+        for m_data in MARKET_META.values():
+            if m_data.get('key') == mk:
+                mat_ts = m_data.get('maturityTs', 0)
+                break
+        pt_series = {}
+        apy_series = {}
+        for d, r in recon.items():
+            apy_series[d] = round(r['impliedApy'], 6)
+            if mat_ts > 0:
+                rd_ts = datetime.strptime(d, '%Y-%m-%d').replace(tzinfo=timezone.utc).timestamp()
+                if mat_ts > rd_ts:
+                    years_r = (mat_ts - rd_ts) / (365.25 * 86400)
+                    pt_series[d] = round(1.0 / math.exp(r['impliedApy'] * years_r), 6)
+        if apy_series:
+            daily_implied_apy[mk] = apy_series
+            daily_pt_price[mk] = pt_series
 
     # ========================================
-    # 18. Market rollover (expired → active)
+    # 18. Market rollover (expired → newer markets, same ticker)
+    # Use PT mints (unique per maturity) to unambiguously attribute wallets.
     # ========================================
     print('Computing market rollover...')
-    # Group markets by underlying ticker
     _all_markets = list(MARKET_META.values())
     markets_by_ticker = defaultdict(list)
     for m in _all_markets:
@@ -864,53 +1108,148 @@ def main():
         if ticker:
             markets_by_ticker[ticker].append(m)
 
+    # Build pt_mint → market key (from ALL markets, including expired via treasuries)
+    pt_to_mkt = {}
+    _treasuries = []
+    if os.path.exists(_all_treasuries_path):
+        _treasuries = json.load(open(_all_treasuries_path))
+    for m in _treasuries:
+        k = m.get('key', '')
+        pt = m.get('mint_pt', '')
+        if k and pt:
+            pt_to_mkt[pt] = k
+    # Also from all_markets.json (active markets have ptMint set)
+    for m in _all_markets:
+        k = m.get('key', '')
+        pt = m.get('ptMint', '')
+        if k and pt:
+            pt_to_mkt[pt] = k
+
+    # Build wallet → set of markets they opened a position in — via PT mint directly
+    wallet_markets = defaultdict(set)
+    for e in events:
+        action = e.get('action', '')
+        if action not in ('buyYt', 'buyPt', 'addLiq'): continue
+        signer = e.get('signer', '')
+        if not signer: continue
+        for mint in e.get('tokenChanges', {}):
+            if mint in pt_to_mkt:
+                wallet_markets[signer].add(pt_to_mkt[mint])
+                break
+
+    # Per-market wallet sets (inverse index)
+    market_wallets = defaultdict(set)
+    for wallet, markets in wallet_markets.items():
+        for mk in markets:
+            market_wallets[mk].add(wallet)
+
     rollover_data = {}
     for ticker, mkts in markets_by_ticker.items():
         mkts.sort(key=lambda m: m.get('maturityTs', 0))
-        for i in range(len(mkts) - 1):
-            expired = mkts[i]
-            next_mk = mkts[i + 1]
+        # For each expired market, find how many of its wallets rolled into a LATER market (same ticker)
+        for i, expired in enumerate(mkts):
             if expired.get('status') != 'expired': continue
+            expired_key = expired['key']
+            expired_wallets = market_wallets.get(expired_key, set())
+            if not expired_wallets: continue
+            # Union of wallets in ALL later markets (same ticker)
+            later_wallets = set()
+            for later_mk in mkts[i + 1:]:
+                later_wallets |= market_wallets.get(later_mk['key'], set())
+            overlap = expired_wallets & later_wallets
+            # Attribute to the IMMEDIATE next market for the arrow label
+            next_mk = mkts[i + 1] if i + 1 < len(mkts) else None
+            rollover_data[expired_key] = {
+                'from': expired_key,
+                'to': next_mk['key'] if next_mk else None,
+                'expiredUsers': len(expired_wallets),
+                'rolledOver': len(overlap),
+                'rolloverPct': round(len(overlap) / len(expired_wallets) * 100, 1) if expired_wallets else 0,
+                'ticker': ticker,
+            }
 
-            # Find wallets in expired market
-            expired_wallets = set()
-            next_wallets = set()
-            for e in events:
-                mk = resolve_market(e)
-                signer = e.get('signer', '')
-                if mk == expired['key'] and e.get('action') in ('buyYt', 'buyPt', 'addLiq'):
-                    expired_wallets.add(signer)
-                elif mk == next_mk['key'] and e.get('action') in ('buyYt', 'buyPt', 'addLiq'):
-                    next_wallets.add(signer)
-
-            overlap = expired_wallets & next_wallets
-            if expired_wallets:
-                rollover_data[f"{expired['key']}→{next_mk['key']}"] = {
-                    'from': expired['key'],
-                    'to': next_mk['key'],
-                    'expiredUsers': len(expired_wallets),
-                    'rolledOver': len(overlap),
-                    'rolloverPct': round(len(overlap) / len(expired_wallets) * 100, 1),
-                }
+    # Aggregate by ticker
+    rollover_by_ticker = {}
+    for ticker, mkts in markets_by_ticker.items():
+        expired_mkts = [m for m in mkts if m.get('status') == 'expired']
+        if not expired_mkts: continue
+        total_expired = sum(rollover_data.get(m['key'], {}).get('expiredUsers', 0) for m in expired_mkts)
+        total_rolled = sum(rollover_data.get(m['key'], {}).get('rolledOver', 0) for m in expired_mkts)
+        if total_expired > 0:
+            rollover_by_ticker[ticker] = {
+                'expiredUsers': total_expired,
+                'rolledOver': total_rolled,
+                'rolloverPct': round(total_rolled / total_expired * 100, 1),
+                'markets': len(expired_mkts),
+            }
 
     # ========================================
-    # 30. Organic vs incentivized (emission detection)
+    # 30. Organic vs incentivized (emission detection — any non-market-token in claimYield)
     # ========================================
     print('Computing organic vs incentivized...')
-    emission_symbols = {'SWTCH', 'JTO', 'JUP', 'ORCA', 'MNDE', 'BLZE', 'F'}
+    # An emission token is any token received via claimYield that isn't the market's own PT/YT/SY/underlying/quote
+    market_known_mints = defaultdict(set)
+    for m_data in MARKET_META.values():
+        key = m_data.get('key', '')
+        if not key: continue
+        for f in ('syMint', 'ptMint', 'ytMint', 'underlyingMint', 'quoteMint'):
+            mint = m_data.get(f, '')
+            if mint:
+                market_known_mints[key].add(mint)
+
     markets_with_emissions = set()
     emission_by_market = defaultdict(int)
+    emission_events_by_market = defaultdict(list)  # market → [(date, mint, delta, symbol)]
 
     for e in events:
         if e.get('action') != 'claimYield': continue
         market = resolve_market(e)
+        if not market: continue
+        known = market_known_mints.get(market, set())
         tc = e.get('tokenChanges', {})
+        bt = e.get('blockTime', 0)
+        date = datetime.fromtimestamp(bt, tz=timezone.utc).strftime('%Y-%m-%d') if bt else ''
         for mint, delta in tc.items():
-            if delta > 0:
-                sym = MINT_SYMBOLS_MAP.get(mint, '')
-                if sym in emission_symbols:
-                    markets_with_emissions.add(market)
-                    emission_by_market[market] += 1
+            if delta <= 0: continue
+            if mint in known: continue  # regular yield in market's own token
+            sym = MINT_SYMBOLS_MAP.get(mint, '')
+            # Skip system/common mints that aren't emissions
+            if sym.startswith('PT-') or sym.startswith('YT-') or sym.startswith('SY-'):
+                continue
+            markets_with_emissions.add(market)
+            emission_by_market[market] += 1
+            emission_events_by_market[market].append({
+                'date': date, 'mint': mint[:16], 'symbol': sym or mint[:8], 'amount': round(delta, 6)
+            })
+
+    # Classification: markets_with_emissions are "incentivized", rest are "organic"
+    # Activity stats per class
+    organic_claims = 0
+    incentivized_claims = 0
+    organic_volume = 0.0
+    incentivized_volume = 0.0
+    for e in events:
+        market = resolve_market(e)
+        if not market: continue
+        action = e.get('action', '')
+        is_incentivized = market in markets_with_emissions
+        if action == 'claimYield':
+            if is_incentivized: incentivized_claims += 1
+            else: organic_claims += 1
+        if action in ('buyPt', 'sellPt', 'buyYt', 'sellYt'):
+            usd = estimate_trade_usd(e, market) if 'estimate_trade_usd' in dir() else 0
+            # Simpler: count events
+            if is_incentivized: incentivized_volume += 1
+            else: organic_volume += 1
+
+    organic_incentivized_summary = {
+        'incentivizedMarkets': sorted(markets_with_emissions),
+        'organicMarkets': sorted(m for m in MARKET_META if m not in markets_with_emissions),
+        'incentivizedClaims': incentivized_claims,
+        'organicClaims': organic_claims,
+        'incentivizedTrades': int(incentivized_volume),
+        'organicTrades': int(organic_volume),
+    }
 
     # ========================================
     # Build output
@@ -991,16 +1330,33 @@ def main():
 
         # Market rollover
         'rollover': rollover_data,
+        'rolloverByTicker': rollover_by_ticker,
 
         # Organic vs incentivized
-        'marketsWithEmissions': list(markets_with_emissions),
+        'marketsWithEmissions': sorted(markets_with_emissions),
         'emissionsByMarket': dict(emission_by_market),
+        'organicIncentivized': organic_incentivized_summary,
 
         # Fee revenue
-        'dailyFees': fee_series,
-        'feesByMarket': {k: round(v, 2) for k, v in sorted(fees_by_market.items(), key=lambda x: -x[1]) if v > 0},
+        # Fee revenue — full protocol history (since Oct 2024)
+        # Revenue = treasury inflows (protocol's take)
+        # Fees = total fees paid by users (Revenue / bps_ratio)
+        # LP = fees - revenue (LP share of fees)
+        'feeDates': _fee_date_list,
+        'dailyRevenue': fee_series_rev,
+        'dailyFees': fee_series_total,
+        'dailyLpFees': fee_series_lp,
+        'revenueByTicker': {k: round(v, 2) for k, v in sorted(rev_by_ticker.items(), key=lambda x: -x[1]) if v > 0},
+        'feesByTicker': {k: round(v, 2) for k, v in sorted(fees_by_ticker.items(), key=lambda x: -x[1]) if v > 0},
+        'revenueByPlatform': {k: round(v, 2) for k, v in sorted(rev_by_platform.items(), key=lambda x: -x[1]) if v > 0},
         'feesByPlatform': {k: round(v, 2) for k, v in sorted(fees_by_platform.items(), key=lambda x: -x[1]) if v > 0},
-        'totalFeesUsd': round(sum(fee_series), 2),
+        'revenueByTickerSeries': rev_by_ticker_series,
+        'feesByTickerSeries': fees_by_ticker_series,
+        'revenueByPlatformSeries': rev_by_platform_series,
+        'feesByPlatformSeries': fees_by_platform_series,
+        'totalRevenueUsd': round(sum(fee_series_rev), 2),
+        'totalFeesUsd': round(sum(fee_series_total), 2),
+        'totalLpFeesUsd': round(sum(fee_series_lp), 2),
         'totalGasUsd': round(total_gas_usd, 2),
 
         # Position analytics

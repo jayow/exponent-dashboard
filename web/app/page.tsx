@@ -5,8 +5,11 @@ import { HistoricalChart } from '@/components/HistoricalChart';
 import { MarketLifecycle } from '@/components/MarketLifecycle';
 import { HolderAnalytics } from '@/components/HolderAnalytics';
 import { MarketCards } from '@/components/MarketCards';
+import { PositionDuration } from '@/components/PositionDuration';
+import { MarketRollover } from '@/components/MarketRollover';
+import { OrganicIncentivized } from '@/components/OrganicIncentivized';
 
-type Tab = 'markets' | 'lifecycle' | 'holders';
+type Tab = 'markets' | 'lifecycle' | 'holders' | 'positions';
 
 export default function HomePage() {
   const [tab, setTab] = useState<Tab>('markets');
@@ -34,6 +37,7 @@ export default function HomePage() {
             { key: 'markets', label: 'Markets' },
             { key: 'lifecycle', label: 'Lifecycle' },
             { key: 'holders', label: 'Holders' },
+            { key: 'positions', label: 'Positions' },
           ] as { key: Tab; label: string }[]).map(t => (
             <button key={t.key} onClick={() => setTab(t.key)}
               className={`text-xs px-3 py-1.5 rounded-lg border transition ${
@@ -47,6 +51,13 @@ export default function HomePage() {
         {tab === 'markets' && <MarketCards />}
         {tab === 'lifecycle' && <MarketLifecycle />}
         {tab === 'holders' && <HolderAnalytics />}
+        {tab === 'positions' && (
+          <div className="space-y-4">
+            <PositionDuration />
+            <OrganicIncentivized />
+            <MarketRollover />
+          </div>
+        )}
       </div>
     </main>
   );

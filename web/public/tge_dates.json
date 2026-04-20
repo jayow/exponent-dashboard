@@ -1,0 +1,85 @@
+{
+  "_comment": "TGE (Token Generation Event) dates for platforms with assets on Exponent. Shown as vertical reference lines on charts. Add/edit as events happen.",
+  "tges": [
+    {
+      "platform": "Jito",
+      "token": "JTO",
+      "date": "2023-12-07",
+      "affects": ["JitoSOL", "Jito Restaking"]
+    },
+    {
+      "platform": "Jupiter",
+      "token": "JUP",
+      "date": "2024-01-31",
+      "affects": ["JLP", "Jupiter Lend"]
+    },
+    {
+      "platform": "Ethena",
+      "token": "ENA",
+      "date": "2024-04-02",
+      "affects": ["USDe", "sUSDE"]
+    },
+    {
+      "platform": "ORE",
+      "token": "ORE",
+      "date": "2024-04-02",
+      "note": "Fair-launch mining",
+      "affects": ["stORE"]
+    },
+    {
+      "platform": "Kamino",
+      "token": "KMNO",
+      "date": "2024-04-30",
+      "affects": ["kUSDC", "kySOL"]
+    },
+    {
+      "platform": "Drift",
+      "token": "DRIFT",
+      "date": "2024-05-16",
+      "affects": ["dSOL", "dzSOL", "dfdvSOL", "Drift Vaults"]
+    },
+    {
+      "platform": "Sanctum",
+      "token": "CLOUD",
+      "date": "2024-07-18",
+      "affects": ["INF"]
+    },
+    {
+      "platform": "Adrena",
+      "token": "ADX",
+      "date": "2024-09-20",
+      "note": "Genesis liquidity event",
+      "affects": ["ALP"]
+    },
+    {
+      "platform": "Solv",
+      "token": "SOLV",
+      "date": "2025-01-17",
+      "note": "Approx (based on ATH)",
+      "affects": ["fragBTC"]
+    },
+    {
+      "platform": "Fragmetric",
+      "token": "FRAG",
+      "date": "2025-07-01",
+      "affects": ["fragSOL", "fragBTC"]
+    },
+    {
+      "platform": "Meteora",
+      "token": "MET",
+      "date": "2025-10-23",
+      "affects": ["MLP", "MLP-USDC"]
+    }
+  ],
+  "_pending_tges": {
+    "_comment": "Platforms with points/airdrop programs but no TGE yet. Fill in when it happens.",
+    "Solstice": { "token": null, "date": null, "affects": ["USX", "eUSX"] },
+    "Hylo": { "token": null, "date": null, "affects": ["hyloSOL", "hyUSD", "hyloSOL+", "xSOL"] },
+    "OnRe": { "token": null, "date": null, "affects": ["ONyc"] },
+    "BULK": { "token": null, "date": null, "affects": ["BulkSOL"] },
+    "Kyros": { "token": null, "date": null, "affects": ["kySOL"] },
+    "Perena": { "token": null, "date": null, "affects": ["USD*"] },
+    "Carrot": { "token": null, "date": null, "affects": ["CRT"] },
+    "MarginFi": { "token": "MRGN", "date": null, "note": "Airdrop discussions ongoing; no confirmed TGE", "affects": ["mUSDC", "mUSDT"] }
+  }
+}
