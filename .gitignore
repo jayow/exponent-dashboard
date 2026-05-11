@@ -8,3 +8,5 @@ out/
 .DS_Store
 web/public/events/
 __pycache__/
+.vercel
+.env*.local

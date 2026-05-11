@@ -18,8 +18,45 @@ for (const l of readFileSync(join(ROOT, '.env'), 'utf8').split('\n')) {
   const t = l.trim(); if (!t || t.startsWith('#') || !t.includes('=')) continue;
   const [k, ...v] = t.split('='); _env[k] = v.join('=');
 }
-const _raw = (_env.HELIUS_API_KEY || '').trim();
-const RPC_URL = _raw.startsWith('http') ? _raw : `https://mainnet.helius-rpc.com/?api-key=${_raw}`;
+// RPC pool — comma-separated list in .env; first is primary, rest are failover.
+// Public RPC stays appended as last-ditch fallback.
+const PUBLIC_RPC = 'https://api.mainnet-beta.solana.com';
+const RPC_POOL = (_env.RPC_URLS || '').split(',').map(s => s.trim()).filter(Boolean);
+if (RPC_POOL.length === 0) {
+  // Backwards-compat: single HELIUS_API_KEY still works
+  const _raw = (_env.HELIUS_API_KEY || '').trim();
+  if (_raw) RPC_POOL.push(_raw.startsWith('http') ? _raw : `https://mainnet.helius-rpc.com/?api-key=${_raw}`);
+}
+if (RPC_POOL.length === 0) { console.error('FATAL: No RPC_URLS configured in .env'); process.exit(1); }
+const ALL_RPCS = [...RPC_POOL, PUBLIC_RPC];
+const RPC_URL = RPC_POOL[0]; // legacy alias
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+let rpcIdx = 0;
+const rpcUsage = new Map();
+const nextRpc = () => { const u = ALL_RPCS[rpcIdx % ALL_RPCS.length]; rpcIdx++; return u; };
+
+// Rotate through the pool with per-call failover. Throws only if every URL fails in this call.
+async function rpcCall(body) {
+  const headers = { 'Content-Type': 'application/json', 'User-Agent': 'curl/8.7.1' };
+  let lastErr;
+  for (let attempt = 0; attempt < ALL_RPCS.length; attempt++) {
+    const url = nextRpc();
+    try {
+      // Throttle public RPC slightly
+      if (url === PUBLIC_RPC) await sleep(150);
+      const r = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+      if (!r.ok) { lastErr = `${r.status} ${url}`; continue; }
+      const j = await r.json();
+      if (j.error) { lastErr = `RPC error ${j.error.code} ${url}`; continue; }
+      rpcUsage.set(url, (rpcUsage.get(url) || 0) + 1);
+      return j;
+    } catch (e) {
+      lastErr = `${e.message} ${url}`;
+    }
+  }
+  throw new Error(`all RPCs failed (last: ${lastErr})`);
+}
 
 async function fetchJSON(url) {
   const r = await fetch(url);
@@ -82,12 +119,7 @@ async function main() {
   const mintSupplyMap = {};
   for (const mint of allMints) {
     try {
-      const r = await fetch(rpcEndpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'User-Agent': 'curl/8.7.1' },
-        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getAccountInfo', params: [mint, { encoding: 'jsonParsed' }] }),
-      });
-      const j = await r.json();
+      const j = await rpcCall({ jsonrpc: '2.0', id: 1, method: 'getAccountInfo', params: [mint, { encoding: 'jsonParsed' }] });
       const supply = BigInt(j.result?.value?.data?.parsed?.info?.supply || '0');
       const dec = j.result?.value?.data?.parsed?.info?.decimals || 6;
       mintSupplyMap[mint] = { supply, decimals: dec };
@@ -95,7 +127,13 @@ async function main() {
       console.error(`  ${mint.slice(0, 12)}... failed: ${e.message}`);
     }
   }
-  console.log(`  Fetched ${Object.keys(mintSupplyMap).length} mint supplies`);
+  console.log(`  Fetched ${Object.keys(mintSupplyMap).length} / ${allMints.length} mint supplies`);
+  for (const [u, n] of rpcUsage) console.log(`    ${n}× ${u.replace(/api-key=[^&]+/, 'api-key=…').replace(/v2\/[^/]+/, 'v2/…').slice(0, 70)}`);
+  // Fail fast if RPC is broken — better to keep the previous JSON than overwrite with zeros.
+  if (Object.keys(mintSupplyMap).length < allMints.length * 0.8) {
+    console.error(`FATAL: only ${Object.keys(mintSupplyMap).length}/${allMints.length} mint supplies fetched — aborting to preserve existing JSON.`);
+    process.exit(1);
+  }
 
   // 5) Query PT-in-pool for clean Income/Farm/LP decomposition
   //    Pool address = legacyMarketAddresses[0] for each market
@@ -106,13 +144,8 @@ async function main() {
     const ptMint = m.ptMint;
     if (!poolAddr || !ptMint) continue;
     try {
-      const r = await fetch(RPC_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'User-Agent': 'curl/8.7.1' },
-        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getTokenAccountsByOwner',
-          params: [poolAddr, { mint: ptMint }, { encoding: 'jsonParsed' }] }),
-      });
-      const j = await r.json();
+      const j = await rpcCall({ jsonrpc: '2.0', id: 1, method: 'getTokenAccountsByOwner',
+        params: [poolAddr, { mint: ptMint }, { encoding: 'jsonParsed' }] });
       for (const acct of (j.result?.value || [])) {
         const amt = BigInt(acct.account.data.parsed.info.tokenAmount.amount);
         const dec = acct.account.data.parsed.info.tokenAmount.decimals;

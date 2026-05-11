@@ -64,12 +64,12 @@ jobs:
             echo "Cache hit — using existing data/ ($(du -sh data | cut -f1))"
           fi
 
-      - name: Create .env from secret
+      - name: Create .env from secrets
         run: |
-          echo "HELIUS_API_KEY=${{ secrets.HELIUS_API_KEY }}" > .env
-          if [ -n "${{ secrets.HELIUS_API_KEY_2 }}" ]; then
-            echo "HELIUS_API_KEY_2=${{ secrets.HELIUS_API_KEY_2 }}" >> .env
-          fi
+          # RPC_URLS is the pool used by both fetch_live_markets.mjs and config.py
+          echo "RPC_URLS=${{ secrets.RPC_URLS }}" > .env
+          # Optional: HELIUS_API_KEY is only used by parse_events.py enhanced-batch path
+          echo "HELIUS_API_KEY=${{ secrets.HELIUS_API_KEY }}" >> .env
 
       - name: Run refresh pipeline
         run: python3 src/refresh.py || true   # continue so we can report status even if a step fails
